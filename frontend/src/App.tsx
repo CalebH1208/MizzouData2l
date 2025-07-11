@@ -1,0 +1,20 @@
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import WelcomeScreen from './components/WelcomeScreen';
+import DataEntryPage from './components/DataEntryPage';
+import GraphsPage from './components/GraphsPage';
+
+const App: React.FC = () => {
+  return (
+    <Router>
+      <Routes>
+        <Route path="/" element={<WelcomeScreen />} />
+        <Route path="/data-entry" element={<DataEntryPage />} />
+        <Route path="/graphs" element={<GraphsPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </Router>
+  );
+};
+
+export default App;
