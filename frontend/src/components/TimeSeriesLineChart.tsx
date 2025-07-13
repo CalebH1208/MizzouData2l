@@ -564,7 +564,7 @@ const TimeSeriesChart: React.FC<Props> = ({
     const { x0 } = createBaseScales();
     
     // Zoom throttling to improve performance
-    let zoomTimeout: NodeJS.Timeout | null = null;
+    let zoomTimeout: ReturnType<typeof setTimeout> | null = null;
     let pendingTransform: d3.ZoomTransform | null = null;
     
     const applyPendingTransform = () => {
