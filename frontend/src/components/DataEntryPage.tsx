@@ -1,5 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Baby_serialize } from "../../wailsjs/go/logFileParser/Telemetry_file"
 
 const DataEntryPage: React.FC = () => {
   const navigate = useNavigate();
@@ -7,6 +8,22 @@ const DataEntryPage: React.FC = () => {
   const handleBack = () => {
     navigate('/');
   };
+
+   const callToBackend = async () => {
+    try {
+      // Debug: Check what's available in the window object
+      console.log('Window go object:', window?.go);
+      console.log('logFileParser available:', window.go?.logFileParser);
+      console.log('Telemetry_file available:', window.go?.logFileParser?.Telemetry_file);
+      
+      const result = await Baby_serialize();
+      console.log(result);
+    }
+    catch (err) {
+      console.log('Error:', err)
+    }
+  };
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -83,7 +100,7 @@ const DataEntryPage: React.FC = () => {
             color: '#cccccc',
             marginBottom: '30px'
           }}>
-            This section will be built out to handle data input, file uploads, 
+            This section will be built out to handle data input, file uploads,
             and data management functionality. Future features may include:
           </p>
           <ul style={{
@@ -100,6 +117,25 @@ const DataEntryPage: React.FC = () => {
           </ul>
         </div>
       </div>
+      <button
+        onClick={callToBackend}
+        style={{
+          backgroundColor: '#F1B82D',
+          color: 'black',
+          border: '2px solid #F1B82D',
+          borderRadius: '8px',
+          padding: '12px 24px',
+          fontSize: '16px',
+          fontWeight: 'bold',
+          cursor: 'pointer',
+          transition: 'all 0.3s ease',
+          marginRight: '20px'
+        }}
+        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8f8f8'}
+        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#F1B82D'}
+      >
+        print hello back or something IDK
+      </button>
     </div>
   );
 };
