@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 )
 
@@ -39,24 +40,36 @@ type Telemetry_channel struct {
 
 type Telemetry_file struct {
 	Name     string              `json:"name"`
-	Tags     map[string]bool     `json:"tags"`
+	Tags     []string            `json:"tags"`
 	Channels []Telemetry_channel `json:"channels"`
 }
 
-func CreateNewTelemetryFile(name string) *Telemetry_file {
+func CreateNewTelemetryFile() *Telemetry_file {
 	return &Telemetry_file{
-		Name:     name,
-		Tags:     map[string]bool{},
+		Name:     "change my name num nuts",
+		Tags:     []string{},
 		Channels: []Telemetry_channel{},
 	}
 }
 
+func (file *Telemetry_file) SetName(newname string) {
+	file.Name = newname
+}
+
 func (file *Telemetry_file) AddTag(tag string) {
-	file.Tags[tag] = true
+	if slices.Contains(file.Tags, tag) {
+		return
+	}
+	file.Tags = append(file.Tags, tag)
 }
 
 func (file *Telemetry_file) RemoveTag(tag string) {
-	delete(file.Tags, tag)
+	for i, t := range file.Tags {
+		if tag == t {
+			file.Tags = append(file.Tags[:i], file.Tags[i+1:]...)
+			return
+		}
+	}
 }
 
 func (file *Telemetry_file) Load_telemetry_file(path string) error {

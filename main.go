@@ -3,9 +3,6 @@ package main
 import (
 	logFileParser "MizzouDataTool/backend"
 	"embed"
-	"fmt"
-	"log"
-	"os"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -19,22 +16,23 @@ func main() {
 	// Create an instance of the app structure
 	app := NewApp()
 	// log.Print(logFileParser.OpenAndPrintFile("C:\\cabal\\testData\\Summer_drive_data.CSV"))
-	logFileParser := logFileParser.CreateNewTelemetryFile("4headers")
-	logFileParser.AddTag("Hey dumb nuts")
-	err := logFileParser.Load_telemetry_file("C:\\Users\\caleb\\goProjects\\MizzouDataTool\\exampleData")
-	if err != nil {
-		log.Print(err)
-	}
-	file, err := os.Create(".\\killme\\results2.txt")
-	if err == nil {
-		fmt.Fprint(file, logFileParser)
-	}
+	logFileParser := logFileParser.CreateNewTelemetryFile()
+	//logFileParser.AddTag("Hey dumb nuts")
+	//err := logFileParser.Load_telemetry_file("C:\\Users\\caleb\\goProjects\\MizzouDataTool\\exampleData")
+	// if err != nil {
+	// 	log.Print(err)
+	// }
+	// file, err := os.Create(".\\killme\\results2.txt")
+	// if err == nil {
+	// 	fmt.Fprint(file, logFileParser)
+	// }
 
 	// Create application with options
-	err = wails.Run(&options.App{
-		Title:  "MizzouDataTool",
-		Width:  1024,
-		Height: 768,
+	err := wails.Run(&options.App{
+		Title:             "MizzouDataTool",
+		Width:             1024,
+		Height:            768,
+		HideWindowOnClose: true,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},

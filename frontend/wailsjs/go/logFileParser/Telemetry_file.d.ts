@@ -8,3 +8,5 @@ export function Baby_serialize():Promise<string>;
 export function Load_telemetry_file(arg1:string):Promise<void>;
 
 export function RemoveTag(arg1:string):Promise<void>;
+
+export function SetName(arg1:string):Promise<void>;

@@ -17,3 +17,7 @@ export function Load_telemetry_file(arg1) {
 export function RemoveTag(arg1) {
   return window['go']['logFileParser']['Telemetry_file']['RemoveTag'](arg1);
 }
+
+export function SetName(arg1) {
+  return window['go']['logFileParser']['Telemetry_file']['SetName'](arg1);
+}
