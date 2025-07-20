@@ -31,8 +31,9 @@ const DataEntryPage: React.FC = () => {
 
   const startValidatingData = async () => {
     const pathElement = document.getElementById("input_box");
-    if(pathElement) {
-      var newName = pathElement.value;
+    var newName = "you suck";
+    if (pathElement) {
+      newName = (pathElement as HTMLInputElement).value;
     }
     LogPrint(newName);
     SetName(newName);
@@ -47,7 +48,7 @@ const DataEntryPage: React.FC = () => {
 
         const pathElement = document.getElementById("input_box");
         if (pathElement) {
-          pathElement.value = `${result}`;
+          (pathElement as HTMLInputElement).value = `${result}`;
         }
         else {
           LogPrint("FUCK");
@@ -181,7 +182,7 @@ const DataEntryPage: React.FC = () => {
         />
 
         <button
-        onClick={startValidatingData}
+          onClick={startValidatingData}
           style={{
             backgroundColor: '#000000',
             color: 'white',
