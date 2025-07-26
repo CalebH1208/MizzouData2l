@@ -28,6 +28,7 @@ interface Props {
   height?: number;
   margin?: { top: number; right: number; bottom: number; left: number };
   numGraphs?: number; // Total number of internal graphs
+  disableContextMenu?: boolean; // Disable right-click context menu functionality
 }
 
 interface ProcessedPoint {
@@ -44,6 +45,7 @@ const TimeSeriesChart: React.FC<Props> = ({
   height = 500,
   margin = { top: 20, right: 20, bottom: 60, left: 60 },
   numGraphs = 2, // Default to 2 internal graphs
+  disableContextMenu = false, // Default to context menu enabled
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -614,6 +616,7 @@ const TimeSeriesChart: React.FC<Props> = ({
     };
 
     const handleContextMenu = (event: MouseEvent) => {
+      if (disableContextMenu) return; // Skip context menu if disabled
       event.preventDefault();
       const rect = canvas.getBoundingClientRect();
       const mouseX = event.clientX - rect.left;
@@ -658,7 +661,9 @@ const TimeSeriesChart: React.FC<Props> = ({
 
     canvas.addEventListener('wheel', handleWheel, { passive: false });
     canvas.addEventListener('click', handleClick);
-    canvas.addEventListener('contextmenu', handleContextMenu);
+    if (!disableContextMenu) {
+      canvas.addEventListener('contextmenu', handleContextMenu);
+    }
     canvas.addEventListener('mousedown', handleMouseDown);
     canvas.addEventListener('mousemove', handleMouseMove);
     canvas.addEventListener('mouseup', handleMouseUp);
@@ -668,13 +673,15 @@ const TimeSeriesChart: React.FC<Props> = ({
       if (zoomTimeout) clearTimeout(zoomTimeout);
       canvas.removeEventListener('wheel', handleWheel);
       canvas.removeEventListener('click', handleClick);
-      canvas.removeEventListener('contextmenu', handleContextMenu);
+      if (!disableContextMenu) {
+        canvas.removeEventListener('contextmenu', handleContextMenu);
+      }
       canvas.removeEventListener('mousedown', handleMouseDown);
       canvas.removeEventListener('mousemove', handleMouseMove);
       canvas.removeEventListener('mouseup', handleMouseUp);
       canvas.removeEventListener('mouseleave', handleMouseUp);
     };
-  }, [allDataPoints, width, height, margin, transform, pivotX, createBaseScales, screenToData, dataToScreen, applyTransform, snapToNearestDataPointUpdated, isDraggingCursor, zoomLimits]);
+  }, [allDataPoints, width, height, margin, transform, pivotX, createBaseScales, screenToData, dataToScreen, applyTransform, snapToNearestDataPointUpdated, isDraggingCursor, zoomLimits, disableContextMenu]);
 
   useEffect(() => {
     const handleClickOutside = () => setContextMenu(null);
@@ -808,7 +815,7 @@ const TimeSeriesChart: React.FC<Props> = ({
         );
       })}
 
-      {contextMenu && (
+      {!disableContextMenu && contextMenu && (
         <div
           style={{
             position: 'fixed', top: contextMenu.y, left: contextMenu.x,

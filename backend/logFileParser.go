@@ -1,4 +1,4 @@
-package logFileParser
+package Backend
 
 import (
 	"encoding/csv"
@@ -11,24 +11,6 @@ import (
 	"slices"
 	"strconv"
 )
-
-func OpenAndPrintFile(path string) string {
-	file, err := os.Open(path)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
-
-	data := make([]byte, 20)
-	count, err := file.Read(data)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if count < 20 {
-		return "get a longer file"
-	}
-	return "First 20 chars:" + string(data)
-}
 
 type Telemetry_channel struct {
 	Name         string
@@ -73,12 +55,14 @@ func (file *Telemetry_file) RemoveTag(tag string) {
 }
 
 func (file *Telemetry_file) Load_telemetry_file(path string) error {
+	log.Print(path)
 	_, err := os.Stat(path + "\\fullData.csv")
 	if errors.Is(err, os.ErrNotExist) {
 		cmd := exec.Command("python", "DataFileUnification.py", path)
-		err := cmd.Run()
+		cmd.Dir = "./backend/"
+		output, err := cmd.CombinedOutput() // Capture both stdout and stderr
 		if err != nil {
-			return fmt.Errorf("data unification failed: %v", err)
+			return fmt.Errorf("data unification failed: %v, output: %s", err, string(output))
 		}
 	}
 	csvData, err := os.Open(path + "\\fullData.csv")
@@ -86,6 +70,7 @@ func (file *Telemetry_file) Load_telemetry_file(path string) error {
 		return err
 	}
 	defer csvData.Close()
+	file.Channels = []Telemetry_channel{}
 
 	reader := csv.NewReader(csvData)
 	names, err := reader.Read()
@@ -143,4 +128,41 @@ func (file *Telemetry_file) Baby_serialize() string {
 	}
 	allNames += "]"
 	return (file.Name + " | " + allNames)
+}
+
+func (file *Telemetry_file) GetData(name string) ([]float32, error) {
+	for _, channel := range file.Channels {
+		if channel.Name == name {
+			return channel.Data, nil
+		}
+	}
+	return nil, fmt.Errorf("that name does not exist")
+}
+
+func (file *Telemetry_file) GetAllChannelNames() []string {
+	ret := []string{}
+	for _, channel := range file.Channels {
+		ret = append(ret, channel.Name)
+	}
+	return ret
+}
+
+func (file *Telemetry_file) GetAllChannelUnvalidatedNames() []string {
+	ret := []string{}
+	for _, channel := range file.Channels {
+		if !channel.is_Validated {
+			ret = append(ret, channel.Name)
+		}
+	}
+	return ret
+}
+
+func (file *Telemetry_file) ValidateChannel(name string) error {
+	for i, channel := range file.Channels {
+		if channel.Name == name {
+			file.Channels[i].is_Validated = true
+			return nil
+		}
+	}
+	return fmt.Errorf("missing name %s", name)
 }
