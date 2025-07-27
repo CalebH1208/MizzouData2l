@@ -16,6 +16,7 @@ func main() {
 	// Create an instance of the app structure
 	app := NewApp()
 	// log.Print(logFileParser.OpenAndPrintFile("C:\\cabal\\testData\\Summer_drive_data.CSV"))
+	logFileParser2 := logFileParser.CreateNewTelemetryFile()
 	logFileParser := logFileParser.CreateNewTelemetryFile()
 	//logFileParser.AddTag("Hey dumb nuts")
 	//err := logFileParser.Load_telemetry_file("C:\\Users\\caleb\\goProjects\\MizzouDataTool\\exampleData")
@@ -41,6 +42,7 @@ func main() {
 		Bind: []interface{}{
 			app,
 			logFileParser,
+			logFileParser2,
 		},
 	})
 

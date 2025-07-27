@@ -17,7 +17,7 @@ type Telemetry_channel struct {
 	Unit         string
 	Conversion   float32
 	is_Validated bool
-	Data         []float32
+	Data         []float64
 }
 
 type Telemetry_file struct {
@@ -98,7 +98,7 @@ func (file *Telemetry_file) Load_telemetry_file(path string) error {
 		if err != nil {
 			return err
 		}
-		file.Channels = append(file.Channels, Telemetry_channel{names[i], units[i], float32(c * p), false, []float32{}})
+		file.Channels = append(file.Channels, Telemetry_channel{names[i], units[i], float32(c * p), false, []float64{}})
 	}
 
 	for {
@@ -111,11 +111,11 @@ func (file *Telemetry_file) Load_telemetry_file(path string) error {
 			return err
 		}
 		for i, val := range record {
-			v, err := strconv.ParseFloat(val, 32)
+			v, err := strconv.ParseFloat(val, 64)
 			if err != nil {
 				return err
 			}
-			file.Channels[i].Data = append(file.Channels[i].Data, float32(v))
+			file.Channels[i].Data = append(file.Channels[i].Data, v)
 		}
 	}
 	return nil
@@ -130,7 +130,7 @@ func (file *Telemetry_file) Baby_serialize() string {
 	return (file.Name + " | " + allNames)
 }
 
-func (file *Telemetry_file) GetData(name string) ([]float32, error) {
+func (file *Telemetry_file) GetData(name string) ([]float64, error) {
 	for _, channel := range file.Channels {
 		if channel.Name == name {
 			return channel.Data, nil

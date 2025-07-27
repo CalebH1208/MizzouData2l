@@ -1,7 +1,5 @@
 package Backend
 
-import ()
-
 type DataLine struct {
 	Name       string
 	Unit       string
@@ -23,5 +21,18 @@ type FullGraph struct {
 	Timevalues       []uint64
 	TimeIndexes      []uint64
 	Graphs           []SoloGraph
-	FullData         Telemetry_file
+	FullData         []Telemetry_channel
+}
+
+func CreateNewGraph() *FullGraph {
+	return &FullGraph{
+		CursorPos:        ^uint64(0),
+		BreakLines:       []uint64{},
+		ExportStartLines: []uint64{},
+		ExportEndLines:   []uint64{},
+		Timevalues:       []uint64{},
+		TimeIndexes:      []uint64{},
+		Graphs:           []SoloGraph{},
+		FullData:         []Telemetry_channel{},
+	}
 }
