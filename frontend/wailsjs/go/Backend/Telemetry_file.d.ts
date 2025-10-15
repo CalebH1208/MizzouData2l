@@ -5,16 +5,32 @@ export function AddTag(arg1:string):Promise<void>;
 
 export function Baby_serialize():Promise<string>;
 
+export function DeleteChannel(arg1:string):Promise<void>;
+
+export function DetectAndCorrectUnsignedErrors(arg1:string):Promise<void>;
+
+export function EnforceRange(arg1:string,arg2:number,arg3:number):Promise<void>;
+
 export function GetAllChannelNames():Promise<Array<string>>;
 
 export function GetAllChannelUnvalidatedNames():Promise<Array<string>>;
 
+export function GetConversion(arg1:string):Promise<number>;
+
 export function GetData(arg1:string):Promise<Array<number>>;
+
+export function GetUnit(arg1:string):Promise<string>;
 
 export function Load_telemetry_file(arg1:string):Promise<void>;
 
 export function RemoveTag(arg1:string):Promise<void>;
 
+export function ResetDefaults(arg1:string):Promise<void>;
+
+export function SetConversion(arg1:string,arg2:number):Promise<void>;
+
 export function SetName(arg1:string):Promise<void>;
+
+export function SetUnit(arg1:string,arg2:string):Promise<void>;
 
 export function ValidateChannel(arg1:string):Promise<void>;

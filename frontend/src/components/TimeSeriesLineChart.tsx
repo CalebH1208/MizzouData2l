@@ -58,10 +58,10 @@ const TimeSeriesChart: React.FC<Props> = ({
 
   // **ULTRA-FAST LOD SYSTEM - NO WINDOWING**
   // Simple, aggressive LOD-only system for maximum performance
-  const MAX_TOTAL_POINTS = 25000; // Much more aggressive limit
+  const MAX_TOTAL_POINTS = 2500000; // Much more aggressive limit
   
   // Very aggressive LOD levels - prioritize performance over detail
-  const LOD_LEVELS = [1, 25, 100, 500, 2000]; // Extremely aggressive
+  const LOD_LEVELS = [1, 2, 100, 500, 2000]; // Extremely aggressive
   
   // Simple, fast LOD calculation - no complex zoom-dependent logic
   const calculateLODStep = useCallback((totalDataVolume: number) => {

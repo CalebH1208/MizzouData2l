@@ -10,6 +10,18 @@ export function Baby_serialize() {
   return window['go']['Backend']['Telemetry_file']['Baby_serialize']();
 }
 
+export function DeleteChannel(arg1) {
+  return window['go']['Backend']['Telemetry_file']['DeleteChannel'](arg1);
+}
+
+export function DetectAndCorrectUnsignedErrors(arg1) {
+  return window['go']['Backend']['Telemetry_file']['DetectAndCorrectUnsignedErrors'](arg1);
+}
+
+export function EnforceRange(arg1, arg2, arg3) {
+  return window['go']['Backend']['Telemetry_file']['EnforceRange'](arg1, arg2, arg3);
+}
+
 export function GetAllChannelNames() {
   return window['go']['Backend']['Telemetry_file']['GetAllChannelNames']();
 }
@@ -18,8 +30,16 @@ export function GetAllChannelUnvalidatedNames() {
   return window['go']['Backend']['Telemetry_file']['GetAllChannelUnvalidatedNames']();
 }
 
+export function GetConversion(arg1) {
+  return window['go']['Backend']['Telemetry_file']['GetConversion'](arg1);
+}
+
 export function GetData(arg1) {
   return window['go']['Backend']['Telemetry_file']['GetData'](arg1);
+}
+
+export function GetUnit(arg1) {
+  return window['go']['Backend']['Telemetry_file']['GetUnit'](arg1);
 }
 
 export function Load_telemetry_file(arg1) {
@@ -30,8 +50,20 @@ export function RemoveTag(arg1) {
   return window['go']['Backend']['Telemetry_file']['RemoveTag'](arg1);
 }
 
+export function ResetDefaults(arg1) {
+  return window['go']['Backend']['Telemetry_file']['ResetDefaults'](arg1);
+}
+
+export function SetConversion(arg1, arg2) {
+  return window['go']['Backend']['Telemetry_file']['SetConversion'](arg1, arg2);
+}
+
 export function SetName(arg1) {
   return window['go']['Backend']['Telemetry_file']['SetName'](arg1);
+}
+
+export function SetUnit(arg1, arg2) {
+  return window['go']['Backend']['Telemetry_file']['SetUnit'](arg1, arg2);
 }
 
 export function ValidateChannel(arg1) {

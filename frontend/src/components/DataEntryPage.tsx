@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Baby_serialize, SetName, Load_telemetry_file, GetAllChannelNames, GetAllChannelUnvalidatedNames, GetData, ValidateChannel } from "../../wailsjs/go/backend/Telemetry_file"
+import { SetName, Load_telemetry_file, GetAllChannelNames, GetAllChannelUnvalidatedNames, GetData, ValidateChannel, SetConversion,GetConversion,SetUnit,GetUnit, DetectAndCorrectUnsignedErrors, ResetDefaults, DeleteChannel,EnforceRange } from "../../wailsjs/go/backend/Telemetry_file"
 import { LogPrint, } from "../../wailsjs/runtime/runtime"
 import { OpenDirectoryDialog } from "../../wailsjs/go/main/App"
 import PopUpDialog from './PopUp';
@@ -14,7 +14,7 @@ const DataEntryPage: React.FC = () => {
   const [popupMessage, setPopupMessage] = useState("NULLLLL");
   const [popupBg, setPopupBg] = useState("#ff0ff0ff");
   
-  // New state for channel management
+  // Channel and data management state
   const [allChannelNames, setAllChannelNames] = useState<string[]>([]);
   const [unvalidatedChannelNames, setUnvalidatedChannelNames] = useState<string[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<string>("");
@@ -24,6 +24,16 @@ const DataEntryPage: React.FC = () => {
     width: window.innerWidth,
     height: window.innerHeight
   });
+
+  // Data modification states
+  const [unit, setUnit] = useState<string>("");
+  const [conversionRate, setConversionRate] = useState<string>("");
+  const [previousValidRate, setPreviousValidRate] = useState<number>(1);
+  const [handleUnsignedInts, setHandleUnsignedInts] = useState<boolean>(false);
+  const [rangeMax, setRangeMax] = useState<string>("");
+  const [rangeMin, setRangeMin] = useState<string>("");
+  
+
 
   // Handle window resize
   useEffect(() => {
@@ -59,29 +69,31 @@ const DataEntryPage: React.FC = () => {
     }
   };
 
+  const updateChannelData = async () => {
+    try {
+      const allNames = await GetAllChannelNames();
+      const unvalidatedNames = await GetAllChannelUnvalidatedNames();
+      
+      setAllChannelNames(allNames);
+      setUnvalidatedChannelNames(unvalidatedNames);
+      setHasChannels(allNames.length > 0);
+      
+    } catch (err) {
+      LogPrint("Error updating channel data: " + err);
+      setAllChannelNames([]);
+      setUnvalidatedChannelNames([]);
+      setHasChannels(false);
+    }
+  };
+
   // Load channel data on component mount
   useEffect(() => {
+    setSelectedChannel("");
     loadChannelData();
   }, []);
 
   const handleBack = () => {
     navigate('/');
-  };
-
-  const callToBackend = async () => {
-    try {
-      //LogPrint("I HATE YOU :)");
-
-      const result = await Baby_serialize();
-      const el = document.getElementById("replace me");
-      if (el) {
-        el.innerHTML = result;
-      }
-      //LogPrint(result);
-    }
-    catch (err) {
-      LogPrint("I hate you tooooooooo");
-    }
   };
 
   const startValidatingData = async () => {
@@ -111,6 +123,7 @@ const DataEntryPage: React.FC = () => {
       
       // Reload channel data after successful parsing
       await loadChannelData();
+      setChartData([]);
     } catch (err) {
       console.log("error parsing data: " + err);
       LogPrint("Error parsing data: " + err);
@@ -121,40 +134,103 @@ const DataEntryPage: React.FC = () => {
 
   }
 
-  // Handle channel selection
+  // Handles channel selection and data display
   const handleChannelSelect = async (channelName: string) => {
     if (!channelName) {
       setChartData([]);
       setSelectedChannel("");
+      setHandleUnsignedInts(false);
+      setConversionRate("1");
+      setPreviousValidRate(1);
       return;
     }
 
     try {
+      setSelectedChannel(channelName);
+      const conv = await GetConversion(channelName);
+      const unit = await GetUnit(channelName);
       const data = await GetData(channelName);
       
-      // Convert data to chart format
-      const dataPoints = data.map((value: number, index: number) => ({
-        index: index,
-        value: value
-      }));
-
-      const chartLine = {
+      setConversionRate(String(conv));
+      setUnit(unit)
+      setChartData([{
         id: channelName,
         name: channelName,
-        color: '#F1B82D', // Use your theme color
-        dataPoints: dataPoints,
+        color: '#F1B82D',
+        dataPoints: data.map((value: number, index: number) => ({
+          index: index,
+          value: value
+        })),
         graphIndex: 0
-      };
-
-      setChartData([chartLine]);
-      setSelectedChannel(channelName);
+      }]);
     } catch (err) {
-      LogPrint("Error loading channel data: " + err);
-      setPopupMessage("Error loading channel data");
+      LogPrint("Error selecting channel: " + err);
+      setPopupMessage("Error selecting channel");
       setPopupBg("#ff0000ff");
       setShowPopup(true);
     }
   };
+
+  const handleDeleteChannel = async () => {
+    if (!selectedChannel) {
+      setPopupMessage("Please select a channel first");
+      setPopupBg("#ff0000ff");
+      setShowPopup(true);
+      return;
+    }
+    if (selectedChannel == "Time"){
+      setPopupMessage("Please don't delete time we need that");
+      setPopupBg("#ff0000ff");
+      setShowPopup(true);
+      return; 
+    }
+    try {
+      await DeleteChannel(selectedChannel);
+      setPopupMessage(`Channel "${selectedChannel}" has been Deleted!`);
+      setPopupBg("#2f773aff");
+      setShowPopup(true);
+
+      
+     await updateChannelData();
+      const unvalidatedNames = await GetAllChannelUnvalidatedNames();
+      const nextChannel = unvalidatedNames.length > 0 ? unvalidatedNames[0] : "Time";
+
+      setSelectedChannel(nextChannel);
+      const conv = await GetConversion(nextChannel);
+      
+      setConversionRate(String(conv));
+
+      await handleChannelSelect(nextChannel);
+    } catch (err) {
+      LogPrint("Error deleting channel: " + err);
+      setPopupMessage("Error Deleting channel");
+      setPopupBg("#ff0000ff");
+      setShowPopup(true);
+    }
+  }
+
+  const handleEnforceRange = async () => {
+    try {
+    EnforceRange(selectedChannel,Number(rangeMin),Number(rangeMax));
+    const data = await GetData(selectedChannel);
+                        setChartData([{
+                          id: selectedChannel,
+                          name: selectedChannel,
+                          color: '#F1B82D',
+                          dataPoints: data.map((value: number, index: number) => ({
+                            index: index,
+                            value: value
+                          })),
+                          graphIndex: 0
+                        }]);
+    } catch (err) {
+      LogPrint("Error setting up range: " + err);
+      setPopupMessage("Error setting up range: " + err);
+      setPopupBg("#ff00FFff");
+      setShowPopup(true);
+    }
+    
+  }
 
   // Handle validation
   const handleValidateChannel = async () => {
@@ -170,9 +246,32 @@ const DataEntryPage: React.FC = () => {
       setPopupMessage(`Channel "${selectedChannel}" has been validated!`);
       setPopupBg("#2f773aff");
       setShowPopup(true);
+
       
+      await updateChannelData();
+      const unvalidatedNames = await GetAllChannelUnvalidatedNames();
+      const nextChannel = unvalidatedNames.length > 0 ? unvalidatedNames[0] : "Time";
+
+      setSelectedChannel(nextChannel);
+      const conv = await GetConversion(nextChannel);
+      
+      setConversionRate(String(conv));
+      
+      const data = await GetData(nextChannel);
+      setChartData([{
+      id: nextChannel,
+      name: nextChannel,
+      color: '#F1B82D',
+      dataPoints: data.map((value: number, index: number) => ({
+        index: index,
+        value: value
+      })),
+      graphIndex: 0
+    }]);
+
+      
+      await handleChannelSelect(nextChannel);
       // Refresh channel data to update validation status
-      await loadChannelData();
     } catch (err) {
       LogPrint("Error validating channel: " + err);
       setPopupMessage("Error validating channel");
@@ -259,7 +358,7 @@ const DataEntryPage: React.FC = () => {
         borderBottom: '2px solid #F1B82D',
         display: 'flex',
         alignItems: 'center',
-        gap: '12px',
+        gap: '4px',
         flexWrap: 'nowrap',
         height: '50px',
         width: '100%',
@@ -382,12 +481,13 @@ const DataEntryPage: React.FC = () => {
             <div style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '15px',
+              gap: '4px',
               marginBottom: '20px',
               padding: '15px',
               backgroundColor: '#333333',
               borderRadius: '8px',
-              border: '2px solid #F1B82D'
+              border: '2px solid #F1B82D',
+              flexWrap: 'wrap'
             }}>
               <label style={{
                 color: 'white',
@@ -430,6 +530,362 @@ const DataEntryPage: React.FC = () => {
                 })}
               </select>
 
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: '50px' }}>
+                <label style={{ color: 'white', fontSize: '14px' }}>Unit:</label>
+                <input
+                  type="text"
+                  value={unit}
+                  onChange={(e) => {
+                    // Just update the display value, don't process yet
+                    setUnit(e.target.value);
+                  }}
+                  onBlur={async (e) => {
+                    // Process the value when the input loses focus
+                    if (selectedChannel) {
+                      try {
+                        const unit = e.target.value;
+                        
+                        // Validate the conversion rate
+                        if (unit){
+                          
+                          // Apply new conversion
+                          await SetUnit(selectedChannel, unit);
+                        } else {
+                          // Invalid conversion rate (0 or NaN)
+                          setConversionRate(String(previousValidRate)); // Revert to previous valid rate
+                          setPopupMessage("PINK UNIT rate");
+                          setPopupBg("#ff00FFFF");
+                          setShowPopup(true);
+                        }
+                      } catch (err) {
+                        LogPrint("Error updating conversion: " + err);
+                        setPopupMessage("Error updating conversion");
+                        setPopupBg("#ff0000ff");
+                        setShowPopup(true);
+                      }
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    // Process on Enter key
+                    if (e.key === 'Enter') {
+                      e.currentTarget.blur(); // Remove focus to trigger onBlur
+                    }
+                  }}
+                  style={{
+                    backgroundColor: '#1a1a1a',
+                    color: 'white',
+                    border: '2px solid #F1B82D',
+                    borderRadius: '6px',
+                    padding: '6px',
+                    width: '40px'
+                  }}
+                  placeholder="Unit"
+                />
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: '50px' }}>
+                <label style={{ color: 'white', fontSize: '14px' }}>Conversion Rate:</label>
+                <input
+                  type="text"
+                  value={conversionRate}
+                  onChange={(e) => {
+                    // Just update the display value, don't process yet
+                    setConversionRate(e.target.value);
+                  }}
+                  onBlur={async (e) => {
+                    // Process the value when the input loses focus
+                    if (selectedChannel) {
+                      try {
+                        const convRate = Number(e.target.value);
+                        
+                        // Validate the conversion rate
+                        if (!isNaN(convRate) && convRate !== 0) {
+                          setPreviousValidRate(convRate); // Store the valid rate
+                          
+                          // Apply new conversion
+                          await SetConversion(selectedChannel, convRate);
+                          
+                          // Reapply unsigned correction if it was enabled
+                          if (handleUnsignedInts) {
+                            await DetectAndCorrectUnsignedErrors(selectedChannel);
+                          }
+                          
+                          // Update display
+                          const data = await GetData(selectedChannel);
+                          setChartData([{
+                            id: selectedChannel,
+                            name: selectedChannel,
+                            color: '#F1B82D',
+                            dataPoints: data.map((value: number, index: number) => ({
+                              index: index,
+                              value: value
+                            })),
+                            graphIndex: 0
+                          }]);
+                        } else {
+                          // Invalid conversion rate (0 or NaN)
+                          setConversionRate(String(previousValidRate)); // Revert to previous valid rate
+                          setPopupMessage(convRate === 0 ? "Conversion rate cannot be zero" : "Invalid conversion rate");
+                          setPopupBg("#ff00FFFF");
+                          setShowPopup(true);
+                        }
+                      } catch (err) {
+                        LogPrint("Error updating conversion: " + err);
+                        setPopupMessage("Error updating conversion");
+                        setPopupBg("#ff0000ff");
+                        setShowPopup(true);
+                        setConversionRate(String(previousValidRate)); // Revert to previous valid rate on error
+                      }
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    // Process on Enter key
+                    if (e.key === 'Enter') {
+                      e.currentTarget.blur(); // Remove focus to trigger onBlur
+                    }
+                  }}
+                  style={{
+                    backgroundColor: '#1a1a1a',
+                    color: 'white',
+                    border: '2px solid #F1B82D',
+                    borderRadius: '6px',
+                    padding: '6px',
+                    width: '40px'
+                  }}
+                  step="any"
+                  placeholder="Rate"
+                />
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: '50px' }}>
+                <label style={{ color: 'white', fontSize: '14px' }}>Range:</label>
+                <input
+                  type="text"
+                  value={rangeMin}
+                  onChange={(e) => {
+                    // Just update the display value, don't process yet
+                    setRangeMin(e.target.value);
+                  }}
+                  onBlur={async (e) => {
+                    // Process the value when the input loses focus
+                    if (selectedChannel) {
+                      try {
+                        const min = Number(e.target.value);
+                        setRangeMin(String(min));
+                        
+                        if(isNaN(min)) {
+                          setPopupMessage("Fix your range");
+                          setPopupBg("#ff00FFFF");
+                          setShowPopup(true);
+                        }
+                      } catch (err) {
+                        LogPrint("Error setting up range: " + err);
+                        setPopupMessage("Error setting up range: " + err);
+                        setPopupBg("#ff00FFff");
+                        setShowPopup(true);
+                      }
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    // Process on Enter key
+                    if (e.key === 'Enter') {
+                      e.currentTarget.blur(); // Remove focus to trigger onBlur
+                    }
+                  }}
+                  style={{
+                    backgroundColor: '#1a1a1a',
+                    color: 'white',
+                    border: '2px solid #F1B82D',
+                    borderRadius: '6px',
+                    padding: '6px',
+                    width: '40px'
+                  }}
+                  step="any"
+                  placeholder="Min"
+                />
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: '50px' }}>
+                <label style={{ color: 'white', fontSize: '14px' }}> - </label>
+                <input
+                  type="text"
+                  value={rangeMax}
+                  onChange={(e) => {
+                    // Just update the display value, don't process yet
+                    setRangeMax(e.target.value);
+                  }}
+                  onBlur={async (e) => {
+                    // Process the value when the input loses focus
+                    if (selectedChannel) {
+                      try {
+
+                        const max = Number(e.target.value);
+                        setRangeMax(String(max))
+                          
+                          // Apply new conversion
+                          if(isNaN(max)) {
+                          setPopupMessage("Fix your range");
+                          setPopupBg("#ff00FFFF");
+                          setShowPopup(true);
+                        }
+                      } catch (err) {
+                        LogPrint("Error setting up range: " + err);
+                        setPopupMessage("Error setting up range: " + err);
+                        setPopupBg("#ff00FFff");
+                        setShowPopup(true);
+                      }
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    // Process on Enter key
+                    if (e.key === 'Enter') {
+                      e.currentTarget.blur(); // Remove focus to trigger onBlur
+                    }
+                  }}
+                  style={{
+                    backgroundColor: '#1a1a1a',
+                    color: 'white',
+                    border: '2px solid #F1B82D',
+                    borderRadius: '6px',
+                    padding: '6px',
+                    width: '40px'
+                  }}
+                  step="any"
+                  placeholder="max"
+                />
+                </div>
+
+                <button
+                onClick={handleEnforceRange}
+                disabled={!selectedChannel}
+                style={{
+                  backgroundColor: selectedChannel ? '#000000' : '#444',
+                  color: 'white',
+                  border: '2px solid #F1B82D',
+                  borderRadius: '6px',
+                  padding: '8px 6px',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  cursor: selectedChannel ? 'pointer' : 'not-allowed',
+                  transition: 'all 0.3s ease',
+                  whiteSpace: 'nowrap'
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedChannel) {
+                    e.currentTarget.style.backgroundColor = '#333333ff';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (selectedChannel) {
+                    e.currentTarget.style.backgroundColor = '#000000';
+                  }
+                }}
+              >
+                Enforce Range
+              </button>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <label style={{ color: 'white', fontSize: '12px' }}>Unsigned:</label>
+                <input
+                  type="checkbox"
+                  checked={handleUnsignedInts}
+                  onChange={async (e) => {
+                    const isChecked = e.target.checked;
+                    setHandleUnsignedInts(isChecked);
+                    
+                    if (selectedChannel) {
+                      try {
+                        
+                        // Only apply unsigned correction if newly checked
+                        if (isChecked) {
+                          await DetectAndCorrectUnsignedErrors(selectedChannel);
+                        }
+                        
+                        // Update display
+                        const data = await GetData(selectedChannel);
+                        setChartData([{
+                          id: selectedChannel,
+                          name: selectedChannel,
+                          color: '#F1B82D',
+                          dataPoints: data.map((value: number, index: number) => ({
+                            index: index,
+                            value: value
+                          })),
+                          graphIndex: 0
+                        }]);
+                      } catch (err) {
+                        LogPrint("Error handling unsigned integers: " + err);
+                        setPopupMessage("Error handling unsigned integers");
+                        setPopupBg("#ff0000ff");
+                        setShowPopup(true);
+                      }
+                    }
+                  }}
+                  style={{
+                    width: '20px',
+                    height: '20px',
+                    accentColor: '#F1B82D'
+                  }}
+                />
+              </div>
+
+                <button
+                  onClick={async () => {
+                    if (selectedChannel) {
+                      try {
+                        // First reset UI state
+                        const conv = await GetConversion(selectedChannel)
+                        setConversionRate(String(conv));
+                        setPreviousValidRate(1);
+                        setHandleUnsignedInts(false);
+                        
+                        // Reset backend data
+                        await ResetDefaults(selectedChannel);
+                        
+                        // Fetch fresh data after reset
+                        const freshData = await GetData(selectedChannel);
+                        
+                        // Update chart with fresh data
+                        setChartData([{
+                          id: selectedChannel,
+                          name: selectedChannel,
+                          color: '#F1B82D',
+                          dataPoints: freshData.map((value: number, index: number) => ({
+                            index: index,
+                            value: value
+                          })),
+                          graphIndex: 0
+                        }]);
+
+                        // Show success message
+                        setPopupMessage("Data reset successfully");
+                        setPopupBg("#2f773aff");
+                        setShowPopup(true);
+                      } catch (err) {
+                        LogPrint("Error resetting defaults: " + err);
+                        setPopupMessage("Error resetting defaults");
+                        setPopupBg("#ff0000ff");
+                        setShowPopup(true);
+                      }
+                    }
+                  }}
+                  style={{
+                    backgroundColor: '#773a2f',
+                    color: 'white',
+                    border: '2px solid #F1B82D',
+                    borderRadius: '6px',
+                    padding: '6px 12px',
+                    fontSize: '12px',
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                    transition: 'all 0.3s ease'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#8f463a'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#773a2f'}
+                >
+                  Reset
+                </button> 
+
               <button
                 onClick={handleValidateChannel}
                 disabled={!selectedChannel}
@@ -438,8 +894,8 @@ const DataEntryPage: React.FC = () => {
                   color: 'white',
                   border: '2px solid #F1B82D',
                   borderRadius: '6px',
-                  padding: '8px 16px',
-                  fontSize: '14px',
+                  padding: '8px 6px',
+                  fontSize: '12px',
                   fontWeight: 'bold',
                   cursor: selectedChannel ? 'pointer' : 'not-allowed',
                   transition: 'all 0.3s ease',
@@ -456,7 +912,35 @@ const DataEntryPage: React.FC = () => {
                   }
                 }}
               >
-                Verify this data is correct, if its the wrong units I'll kill you
+                Validata Channel
+              </button>
+              <button
+                onClick={handleDeleteChannel}
+                disabled={!selectedChannel}
+                style={{
+                  backgroundColor: selectedChannel ? '#ff0000ff' : '#444',
+                  color: 'white',
+                  border: '2px solid #F1B82D',
+                  borderRadius: '6px',
+                  padding: '8px 16px',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  cursor: selectedChannel ? 'pointer' : 'not-allowed',
+                  transition: 'all 0.3s ease',
+                  whiteSpace: 'nowrap'
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedChannel) {
+                    e.currentTarget.style.backgroundColor = '#dd5555ff';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (selectedChannel) {
+                    e.currentTarget.style.backgroundColor = '#ff0000ff';
+                  }
+                }}
+              >
+                Delete Channel
               </button>
             </div>
 
