@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SetName, Load_telemetry_file, GetAllChannelNames, GetAllChannelUnvalidatedNames, GetData, ValidateChannel, SetConversion,GetConversion,SetUnit,GetUnit, DetectAndCorrectUnsignedErrors, ResetDefaults, DeleteChannel,EnforceRange } from "../../wailsjs/go/backend/Telemetry_file"
+import { LogFile_to_BTF, Write_BTF} from  "../../wailsjs/go/backend/Basic_telemetry_file"
 import { LogPrint, } from "../../wailsjs/runtime/runtime"
 import { OpenDirectoryDialog } from "../../wailsjs/go/main/App"
 import PopUpDialog from './PopUp';
@@ -170,6 +171,24 @@ const DataEntryPage: React.FC = () => {
       setShowPopup(true);
     }
   };
+
+  const handleSaveData = async () => {
+    try {
+      await LogFile_to_BTF();
+      await Write_BTF(false);
+      LogPrint("File stored");
+      setPopupMessage("File stored");
+      setPopupBg("#42e3ffff");
+      setShowPopup(true);
+    }
+    catch(err) {
+      LogPrint("Error: " + err);
+      setPopupMessage("Error: " + err);
+      setPopupBg("#fd0000ff");
+      setShowPopup(true);
+    }
+    
+  }
 
   const handleDeleteChannel = async () => {
     if (!selectedChannel) {
@@ -941,6 +960,41 @@ const DataEntryPage: React.FC = () => {
                 }}
               >
                 Delete Channel
+              </button>
+              
+              <button
+                onClick={handleSaveData}
+                disabled={!selectedChannel}
+                style={{
+                  backgroundColor: selectedChannel ? '#ff00FFff' : '#444',
+                  color: 'white',
+                  border: '2px solid #000000',
+                  borderRadius: '6px',
+                  padding: '8px 16px',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  cursor: selectedChannel ? 'pointer' : 'not-allowed',
+                  transition: 'all 0.3s ease',
+                  whiteSpace: 'nowrap',
+                  marginLeft: 'auto'
+
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedChannel) {
+                    e.currentTarget.style.backgroundColor = '#FF55FFff';
+                    e.currentTarget.style.borderColor = '#ffffff';
+                    e.currentTarget.style.color = '#000000';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (selectedChannel) {
+                    e.currentTarget.style.backgroundColor = '#ff00FFff';
+                    e.currentTarget.style.borderColor = '#000000';
+                    e.currentTarget.style.color = '#ffffff';
+                  }
+                }}
+              >
+                Save All Validated Data
               </button>
             </div>
 

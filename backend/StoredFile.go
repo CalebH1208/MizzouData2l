@@ -3,17 +3,20 @@ package Backend
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 )
 
 type Stored_channel struct {
 	Unit string
-	Conv float32
-	Data []float32
+	Conv float64
+	Data []float64
 }
 
 type Basic_telemetry_file struct {
+	parser   *Telemetry_file
 	Name     string
 	Tags     []string
 	Channels map[string]Stored_channel
@@ -45,8 +48,9 @@ func readString(r io.Reader) (string, error) {
 	return string(buf), nil
 }
 
-func New_BTF() *Basic_telemetry_file {
+func New_BTF(fileParser *Telemetry_file) *Basic_telemetry_file {
 	return &Basic_telemetry_file{
+		parser:   fileParser,
 		Name:     "",
 		Tags:     nil,
 		Channels: make(map[string]Stored_channel),
@@ -59,11 +63,11 @@ func (B *Basic_telemetry_file) ClearBTF() {
 	B.Channels = make(map[string]Stored_channel)
 }
 
-func (B *Basic_telemetry_file) LogFile_to_BTF(file Telemetry_file) {
-	B.Name = file.Name
-	B.Tags = file.Tags
+func (B *Basic_telemetry_file) LogFile_to_BTF() {
+	B.Name = B.parser.Name
+	B.Tags = B.parser.Tags
 	B.Channels = make(map[string]Stored_channel)
-	for _, c := range file.Channels {
+	for _, c := range B.parser.Channels {
 		if c.is_Validated {
 			B.Add_channel(c.Name, c.Unit, c.Conversion, c.Data)
 		}
@@ -75,15 +79,32 @@ func (B *Basic_telemetry_file) Write_BTF(overwrite bool) error {
 		return errors.New("missing Name for Basic_telemetry_file")
 	}
 
-	_, err := os.Stat("./DATACACHE/" + B.Name + ".MRTF")
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %w", err)
+	}
+	exeDir := filepath.Dir(exePath)
 
-	if err == nil && !overwrite {
-		return errors.New("This file already exists")
-	} else if err == nil && overwrite {
-		err := os.Remove("./DATACACHE/" + B.Name + ".MRTF")
+	cacheDir := filepath.Join(exeDir, "DATACACHE")
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		return fmt.Errorf("failed to create cache directory: %w", err)
+	}
+	filePath := filepath.Join(cacheDir, B.Name+".MRTF")
+	_, err = os.Stat(filePath)
+
+	// File exists
+	if err == nil {
+		if !overwrite {
+			return errors.New("file already exists")
+		}
+		if err := os.Remove(filePath); err != nil {
+			return fmt.Errorf("failed to delete existing file: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to check file existence: %w", err)
 	}
 
-	f, err := os.Create("./DATACACHE/" + B.Name + ".MRTF")
+	f, err := os.Create(filePath)
 	if err != nil {
 		return err
 	}
@@ -141,11 +162,8 @@ func (B *Basic_telemetry_file) Write_BTF(overwrite bool) error {
 	return nil
 }
 
-func (B *Basic_telemetry_file) Read_BTF() error {
-	if B.Name == "" {
-		return errors.New("missing Name for Basic_telemetry_file")
-	}
-	f, err := os.Open(B.Name + ".MRTF")
+func (B *Basic_telemetry_file) Read_BTF(filepath string) error {
+	f, err := os.Open(filepath)
 	if err != nil {
 		return err
 	}
@@ -213,7 +231,7 @@ func (B *Basic_telemetry_file) Read_BTF() error {
 		if err := binary.Read(f, binary.LittleEndian, &dataLen); err != nil {
 			return err
 		}
-		ch.Data = make([]float32, dataLen)
+		ch.Data = make([]float64, dataLen)
 		for j := uint32(0); j < dataLen; j++ {
 			if err := binary.Read(f, binary.LittleEndian, &ch.Data[j]); err != nil {
 				return err
@@ -225,7 +243,7 @@ func (B *Basic_telemetry_file) Read_BTF() error {
 	return nil
 }
 
-func (B *Basic_telemetry_file) Add_channel(name string, unit string, conv float32, data []float32) {
+func (B *Basic_telemetry_file) Add_channel(name string, unit string, conv float64, data []float64) {
 
 	if _, ok := B.Channels[name]; ok {
 		return
@@ -235,4 +253,32 @@ func (B *Basic_telemetry_file) Add_channel(name string, unit string, conv float3
 		Conv: conv,
 		Data: data,
 	}
+}
+
+func (B *Basic_telemetry_file) List_all_stored_files() ([]string, error) {
+	exePath, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get executable path: %w", err)
+	}
+	exeDir := filepath.Dir(exePath)
+
+	cacheDir := filepath.Join(exeDir, "DATACACHE")
+
+	if _, err := os.Stat(cacheDir); os.IsNotExist(err) {
+		return []string{}, nil
+	}
+
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read cache directory: %w", err)
+	}
+
+	var files []string
+	for _, entry := range entries {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".MRTF" {
+			files = append(files, entry.Name()) // Keep full filename
+		}
+	}
+
+	return files, nil
 }

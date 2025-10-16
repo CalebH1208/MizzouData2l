@@ -17,7 +17,7 @@ func main() {
 	// Create an instance of the app structure
 	app := NewApp()
 	logFileParser := Backend.CreateNewTelemetryFile()
-	StoredFileManager := Backend.New_BTF()
+	StoredFileManager := Backend.New_BTF(logFileParser)
 
 	err := wails.Run(&options.App{
 		Title:             "MizzouDataTool",
@@ -27,7 +27,7 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 254, A: 1},
+		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 0, A: 1},
 		OnStartup:        app.startup,
 		Bind: []interface{}{
 			app,
