@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -34,7 +36,48 @@ func (a *App) OpenDirectoryDialog() (string, error) {
 	return result, err
 }
 
+func (a *App) OpenFileDialog() (string, error) {
+	// Get the executable's directory
+	exePath, err := os.Executable()
+	if err != nil {
+		exePath, _ = os.Getwd() // Fallback to current directory
+	}
+	exeDir := filepath.Dir(exePath)
+	dataCacheDir := filepath.Join(exeDir, "DATACACHE")
+
+	options := runtime.OpenDialogOptions{
+		Title:            "Select MRTF File",
+		DefaultDirectory: dataCacheDir,
+		Filters: []runtime.FileFilter{
+			{
+				DisplayName: "MRTF Files (*.mrtf)",
+				Pattern:     "*.mrtf",
+			},
+			{
+				DisplayName: "All Files (*.*)",
+				Pattern:     "*.*",
+			},
+		},
+	}
+
+	result, err := runtime.OpenFileDialog(a.ctx, options)
+	return result, err
+}
+
 // Greet returns a greeting for the given name
 func (a *App) Greet(name string) string {
 	return fmt.Sprintf("Hello %s, It's show time!", name)
+}
+
+// OpenChannelManagerWindow opens a new window for the Channel Manager
+func (a *App) OpenChannelManagerWindow() {
+	// In Wails v2, we don't have native multi-window support
+	// So we'll emit an event that the frontend will handle
+	// The frontend will use window.open() with the proper production-safe approach
+	runtime.EventsEmit(a.ctx, "open-channel-manager")
+}
+
+// NotifyGraphRefresh emits an event to refresh graphs in the main window
+func (a *App) NotifyGraphRefresh() {
+	runtime.EventsEmit(a.ctx, "graph-refresh")
 }

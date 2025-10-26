@@ -1,12 +1,14 @@
 package Backend
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 type Stored_channel struct {
@@ -67,11 +69,42 @@ func (B *Basic_telemetry_file) LogFile_to_BTF() {
 	B.Name = B.parser.Name
 	B.Tags = B.parser.Tags
 	B.Channels = make(map[string]Stored_channel)
+
+	// Count validated channels
+	validatedChannels := make([]Telemetry_channel, 0)
 	for _, c := range B.parser.Channels {
 		if c.is_Validated {
-			B.Add_channel(c.Name, c.Unit, c.Conversion, c.Data)
+			validatedChannels = append(validatedChannels, c)
 		}
 	}
+
+	// Process channels concurrently
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for _, c := range validatedChannels {
+		wg.Add(1)
+		go func(channel Telemetry_channel) {
+			defer wg.Done()
+
+			conversion := float64(channel.Conversion)
+			data := make([]float64, len(channel.Data))
+			for i, val := range channel.Data {
+				data[i] = float64(val)
+			}
+
+			// Thread-safe channel addition
+			mu.Lock()
+			B.Channels[channel.Name] = Stored_channel{
+				Unit: channel.Unit,
+				Conv: conversion,
+				Data: data,
+			}
+			mu.Unlock()
+		}(c)
+	}
+
+	wg.Wait()
 }
 
 func (B *Basic_telemetry_file) Write_BTF(overwrite bool) error {
@@ -136,26 +169,77 @@ func (B *Basic_telemetry_file) Write_BTF(overwrite bool) error {
 		}
 	}
 
+	fmt.Printf("Writing %d channels concurrently\n", len(B.Channels))
 	if err := binary.Write(f, binary.LittleEndian, uint32(len(B.Channels))); err != nil {
 		return err
 	}
+
+	// Pre-encode all channels concurrently
+	type encodedChannel struct {
+		name string
+		data *bytes.Buffer
+	}
+
+	encodedChannels := make([]encodedChannel, 0, len(B.Channels))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	errChan := make(chan error, len(B.Channels))
+
 	for name, ch := range B.Channels {
-		if err := writeString(f, name); err != nil {
-			return err
-		}
-		if err := writeString(f, ch.Unit); err != nil {
-			return err
-		}
-		if err := binary.Write(f, binary.LittleEndian, ch.Conv); err != nil {
-			return err
-		}
-		if err := binary.Write(f, binary.LittleEndian, uint32(len(ch.Data))); err != nil {
-			return err
-		}
-		for _, v := range ch.Data {
-			if err := binary.Write(f, binary.LittleEndian, v); err != nil {
-				return err
+		wg.Add(1)
+		go func(chName string, channel Stored_channel) {
+			defer wg.Done()
+
+			buf := new(bytes.Buffer)
+
+			// Encode channel metadata and data into buffer
+			if err := writeString(buf, chName); err != nil {
+				errChan <- err
+				return
 			}
+			if err := writeString(buf, channel.Unit); err != nil {
+				errChan <- err
+				return
+			}
+			if err := binary.Write(buf, binary.LittleEndian, channel.Conv); err != nil {
+				errChan <- err
+				return
+			}
+			if err := binary.Write(buf, binary.LittleEndian, uint32(len(channel.Data))); err != nil {
+				errChan <- err
+				return
+			}
+			for _, v := range channel.Data {
+				if err := binary.Write(buf, binary.LittleEndian, v); err != nil {
+					errChan <- err
+					return
+				}
+			}
+
+			// Add to encoded channels list (thread-safe)
+			mu.Lock()
+			encodedChannels = append(encodedChannels, encodedChannel{
+				name: chName,
+				data: buf,
+			})
+			mu.Unlock()
+
+			fmt.Printf("Channel %s: %d data points encoded\n", chName, len(channel.Data))
+		}(name, ch)
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	// Check for encoding errors
+	if err := <-errChan; err != nil {
+		return fmt.Errorf("error encoding channel: %w", err)
+	}
+
+	// Write all encoded channels to file sequentially
+	for _, encoded := range encodedChannels {
+		if _, err := f.Write(encoded.data.Bytes()); err != nil {
+			return fmt.Errorf("error writing channel %s: %w", encoded.name, err)
 		}
 	}
 
@@ -214,30 +298,92 @@ func (B *Basic_telemetry_file) Read_BTF(filepath string) error {
 	if err := binary.Read(f, binary.LittleEndian, &chCount); err != nil {
 		return err
 	}
-	B.Channels = make(map[string]Stored_channel)
+	fmt.Printf("Reading %d channels concurrently\n", chCount)
+
+	// Store channel metadata and raw data bytes for concurrent parsing
+	type channelMetadata struct {
+		name    string
+		unit    string
+		conv    float64
+		rawData []byte
+	}
+
+	channelMetas := make([]channelMetadata, chCount)
+
+	// Read all channel metadata and raw data sequentially
 	for i := uint32(0); i < chCount; i++ {
-		var ch Stored_channel
 		name, err := readString(f)
 		if err != nil {
 			return err
 		}
-		if ch.Unit, err = readString(f); err != nil {
+		unit, err := readString(f)
+		if err != nil {
 			return err
 		}
-		if err := binary.Read(f, binary.LittleEndian, &ch.Conv); err != nil {
+		var conv float64
+		if err := binary.Read(f, binary.LittleEndian, &conv); err != nil {
 			return err
 		}
 		var dataLen uint32
 		if err := binary.Read(f, binary.LittleEndian, &dataLen); err != nil {
 			return err
 		}
-		ch.Data = make([]float64, dataLen)
-		for j := uint32(0); j < dataLen; j++ {
-			if err := binary.Read(f, binary.LittleEndian, &ch.Data[j]); err != nil {
-				return err
-			}
+
+		// Read raw bytes for this channel's data
+		rawDataSize := int(dataLen) * 8 // 8 bytes per float64
+		rawData := make([]byte, rawDataSize)
+		if _, err := io.ReadFull(f, rawData); err != nil {
+			return err
 		}
-		B.Channels[name] = ch
+
+		channelMetas[i] = channelMetadata{
+			name:    name,
+			unit:    unit,
+			conv:    conv,
+			rawData: rawData,
+		}
+	}
+
+	// Parse channels concurrently
+	B.Channels = make(map[string]Stored_channel)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	errChan := make(chan error, chCount)
+
+	for i := uint32(0); i < chCount; i++ {
+		wg.Add(1)
+		go func(meta channelMetadata) {
+			defer wg.Done()
+
+			// Parse float64 data from raw bytes
+			reader := bytes.NewReader(meta.rawData)
+			dataLen := len(meta.rawData) / 8
+			data := make([]float64, dataLen)
+
+			for j := 0; j < dataLen; j++ {
+				if err := binary.Read(reader, binary.LittleEndian, &data[j]); err != nil {
+					errChan <- fmt.Errorf("error reading data for channel %s: %w", meta.name, err)
+					return
+				}
+			}
+
+			// Thread-safe map write
+			mu.Lock()
+			B.Channels[meta.name] = Stored_channel{
+				Unit: meta.unit,
+				Conv: meta.conv,
+				Data: data,
+			}
+			mu.Unlock()
+		}(channelMetas[i])
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	// Check for errors
+	if err := <-errChan; err != nil {
+		return err
 	}
 
 	return nil

@@ -9,6 +9,6 @@ export function List_all_stored_files():Promise<Array<string>>;
 
 export function LogFile_to_BTF():Promise<void>;
 
-export function Read_BTF():Promise<void>;
+export function Read_BTF(arg1:string):Promise<void>;
 
 export function Write_BTF(arg1:boolean):Promise<void>;

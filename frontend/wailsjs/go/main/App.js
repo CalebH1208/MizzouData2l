@@ -6,6 +6,18 @@ export function Greet(arg1) {
   return window['go']['main']['App']['Greet'](arg1);
 }
 
+export function NotifyGraphRefresh() {
+  return window['go']['main']['App']['NotifyGraphRefresh']();
+}
+
+export function OpenChannelManagerWindow() {
+  return window['go']['main']['App']['OpenChannelManagerWindow']();
+}
+
 export function OpenDirectoryDialog() {
   return window['go']['main']['App']['OpenDirectoryDialog']();
+}
+
+export function OpenFileDialog() {
+  return window['go']['main']['App']['OpenFileDialog']();
 }

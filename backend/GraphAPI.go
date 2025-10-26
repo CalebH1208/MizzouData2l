@@ -11,15 +11,15 @@ const MAX_POINTS_ON_SCREEN int = 25000
 type Full_graph struct {
 	ctx                 context.Context
 	stored_file_manager *Basic_telemetry_file
-	FullTimeStamps      []int64
+	FullTimeStamps      []float64
 
 	// maps a string to its data and all of the corresponding LOD levels
 	ViewableChannels map[string]*Data_channel
 
-	CursorPos        int64
-	BreakLines       []int64
-	ExportStartLines []int64
-	ExportEndLines   []int64
+	CursorPos        float64
+	BreakLines       []float64
+	ExportStartLines []float64
+	ExportEndLines   []float64
 
 	Graphs   []Solo_graph
 	LODLevel int
@@ -37,29 +37,31 @@ type Data_channel struct {
 
 type LOD_data_line struct {
 	Step       int
-	Timestamps []int64
+	Timestamps []float64
 	IndexMap   []int64
 	Values     []float64
 }
 
 type Solo_graph struct {
-	Index        int
-	Title        string
-	YRange       [2]float64
-	DataChannels []string
+	Index         int
+	Title         string
+	YRange        [2]float64
+	DataChannels  []string
+	UseSplitAxis  bool                  // If true, each channel uses its own Y-scale
+	ChannelRanges map[string][2]float64 // Per-channel Y-ranges when UseSplitAxis is true
 }
 
 // front end transmission objects
 
 type Viewport_request struct {
-	StartTime int64 `json:"startTime"`
-	EndTime   int64 `json:"endTime"`
+	StartTime float64 `json:"startTime"`
+	EndTime   float64 `json:"endTime"`
 	//MaxPoints int    `json:"maxPoints"` //dont think I need this but will leave it here
 }
 
 type Viewport_response struct {
-	Timestamps      []int64 `json:"timestamps"`
-	OriginalIndices []int64 `json:"originalIndices"`
+	Timestamps      []float64 `json:"timestamps"`
+	OriginalIndices []int64   `json:"originalIndices"`
 
 	Graphs []Graph_viewport `json:"graphs"`
 
@@ -67,52 +69,67 @@ type Viewport_response struct {
 	ExportStarts []int `json:"exportStarts"`
 	ExportEnds   []int `json:"exportEnds"`
 
-	LODStep       int   `json:"lodStep"`
-	TotalPoints   int   `json:"totalPoints"`
-	ViewportStart int64 `json:"viewportStart"`
-	ViewportEnd   int64 `json:"viewportEnd"`
-	CursorPos     int64 `json:"cursorPos"`
+	LODStep       int     `json:"lodStep"`
+	TotalPoints   int     `json:"totalPoints"`
+	ViewportStart float64 `json:"viewportStart"`
+	ViewportEnd   float64 `json:"viewportEnd"`
+	CursorPos     float64 `json:"cursorPos"`
 }
 
 type Graph_viewport struct {
-	Index    int                `json:"index"`
-	Title    string             `json:"title"`
-	YRange   [2]float64         `json:"yRange"`
-	Channels []Channel_viewport `json:"channels"`
+	Index        int                `json:"index"`
+	Title        string             `json:"title"`
+	YRange       [2]float64         `json:"yRange"`
+	UseSplitAxis bool               `json:"useSplitAxis"`
+	Channels     []Channel_viewport `json:"channels"`
 }
 
 type Channel_viewport struct {
-	Name   string    `json:"name"`
-	Unit   string    `json:"unit"`
-	Color  string    `json:"color"`
-	Values []float64 `json:"values"`
+	Name   string     `json:"name"`
+	Unit   string     `json:"unit"`
+	Color  string     `json:"color"`
+	Values []float64  `json:"values"`
+	YRange [2]float64 `json:"yRange"` // Per-channel Y-range when graph uses split-axis mode
 }
 
 type Graph_metadata struct {
 	TotalPoints   int          `json:"totalPoints"`
-	TimeRange     [2]int64     `json:"timeRange"`
+	TimeRange     [2]float64   `json:"timeRange"`
 	NumGraphs     int          `json:"numGraphs"`
 	GraphInfo     []Graph_info `json:"graphInfo"`
 	AvailableLODs []int        `json:"availableLODs"`
 	TotalChannels int          `json:"totalChannels"`
-	CursorPos     int64        `json:"cursorPos"`
+	CursorPos     float64      `json:"cursorPos"`
 }
 
 type Graph_info struct {
 	Index        int        `json:"index"`
 	Title        string     `json:"title"`
 	YRange       [2]float64 `json:"yRange"`
+	UseSplitAxis bool       `json:"useSplitAxis"`
 	ChannelNames []string   `json:"channelNames"`
 	ChannelCount int        `json:"channelCount"`
+}
+
+type Channel_info struct {
+	Name       string `json:"name"`
+	Unit       string `json:"unit"`
+	Color      string `json:"color"`
+	GraphIndex int    `json:"graphIndex"` // -1 if not assigned to any graph
+}
+
+type Graph_configuration struct {
+	Title        string   `json:"title"`
+	ChannelNames []string `json:"channelNames"`
 }
 
 func New_full_graph(SFM *Basic_telemetry_file) *Full_graph {
 	return &Full_graph{
 		stored_file_manager: SFM,
 		ViewableChannels:    make(map[string]*Data_channel),
-		BreakLines:          make([]int64, 0),
-		ExportStartLines:    make([]int64, 0),
-		ExportEndLines:      make([]int64, 0),
+		BreakLines:          make([]float64, 0),
+		ExportStartLines:    make([]float64, 0),
+		ExportEndLines:      make([]float64, 0),
 		Graphs:              make([]Solo_graph, 0),
 	}
 }
@@ -126,7 +143,7 @@ func (fg *Full_graph) InitializeFromStoredFile() error {
 	defer fg.mutex.Unlock()
 
 	if fg.stored_file_manager == nil {
-		return fmt.Errorf("Need a file manager")
+		return fmt.Errorf("need a file manager")
 	}
 	if len(fg.stored_file_manager.Channels) == 0 {
 		return fmt.Errorf("no channels in stored file")
@@ -144,8 +161,9 @@ func (fg *Full_graph) InitializeFromStoredFile() error {
 	fmt.Printf("[GraphAPI] Loading %d channels with %d data points each...\n",
 		len(fg.stored_file_manager.Channels), dataLength)
 
+	fg.FullTimeStamps = make([]float64, dataLength)
 	for i, v := range fg.stored_file_manager.Channels["Time"].Data {
-		fg.FullTimeStamps[i] = int64(v)
+		fg.FullTimeStamps[i] = v
 	}
 
 	maxLODStep := fg.calculateMaxLODStep(dataLength, channelsPerGraph)
@@ -168,17 +186,39 @@ func (fg *Full_graph) InitializeFromStoredFile() error {
 
 	fmt.Printf("[GraphAPI] Pre-calculating LOD levels (1 to %d)...\n", maxLODStep)
 
-	for channelName, channel := range fg.ViewableChannels {
-		storedChannel := fg.stored_file_manager.Channels[channelName]
-		for step := 1; step <= maxLODStep; step *= 2 {
-			channel.DataLines[step] = fg.buildLODLevelFromStored(
-				storedChannel.Data,
-				step,
-			)
-		}
-		fmt.Printf("[GraphAPI] Channel '%s': generated %d LOD levels\n",
-			channelName, len(channel.DataLines))
+	// Assign vibrant colors to channels
+	channelIndex := 0
+	for _, channel := range fg.ViewableChannels {
+		channel.Color = generateVibrantColor(channelIndex)
+		channelIndex++
 	}
+
+	// Generate LOD levels concurrently for all channels
+	var wg sync.WaitGroup
+	errChan := make(chan error, len(fg.ViewableChannels))
+
+	for channelName, channel := range fg.ViewableChannels {
+		wg.Add(1)
+		go func(chName string, ch *Data_channel) {
+			defer wg.Done()
+
+			storedChannel := fg.stored_file_manager.Channels[chName]
+
+			// Build all LOD levels in a single pass
+			fg.buildAllLODLevelsFromStored(ch, storedChannel.Data, maxLODStep)
+
+			fmt.Printf("[GraphAPI] Channel '%s': generated %d LOD levels\n", chName, len(ch.DataLines))
+		}(channelName, channel)
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	// Check for errors
+	if err := <-errChan; err != nil {
+		return err
+	}
+
 	fmt.Printf("[GraphAPI] Successfully loaded and initialized from stored file '%s'\n",
 		fg.stored_file_manager.Name)
 
@@ -206,13 +246,49 @@ func (fg *Full_graph) calculateMaxLODStep(channel_length int, number_of_channels
 	return maxLODStep
 }
 
+// buildAllLODLevelsFromStored builds all LOD levels in a single pass through the data
+// This is much more efficient than calling buildLODLevelFromStored multiple times
+func (fg *Full_graph) buildAllLODLevelsFromStored(channel *Data_channel, rawData []float64, maxLODStep int) {
+	fullSize := len(rawData)
+
+	// Pre-allocate all LOD level structures
+	lodLevels := make(map[int]*LOD_data_line)
+	for step := 1; step <= maxLODStep; step *= 2 {
+		lodSize := (fullSize + step - 1) / step
+		lodLevels[step] = &LOD_data_line{
+			Step:       step,
+			Timestamps: make([]float64, 0, lodSize),
+			IndexMap:   make([]int64, 0, lodSize),
+			Values:     make([]float64, 0, lodSize),
+		}
+	}
+
+	// Single pass through the data, distribute to appropriate LOD levels
+	for i := 0; i < fullSize; i++ {
+		// Check which LOD levels should include this point using modulo
+		for step := 1; step <= maxLODStep; step *= 2 {
+			if i%step == 0 {
+				lod := lodLevels[step]
+				lod.Timestamps = append(lod.Timestamps, fg.FullTimeStamps[i])
+				lod.IndexMap = append(lod.IndexMap, int64(i))
+				lod.Values = append(lod.Values, rawData[i])
+			}
+		}
+	}
+
+	// Assign the built LOD levels to the channel
+	channel.DataLines = lodLevels
+}
+
+// buildLODLevelFromStored is kept for backwards compatibility but is no longer used
+// in the main initialization path
 func (fg *Full_graph) buildLODLevelFromStored(rawData []float64, step int) *LOD_data_line {
 	fullSize := len(rawData)
 	lodSize := (fullSize + step - 1) / step
 
 	lod := &LOD_data_line{
 		Step:       step,
-		Timestamps: make([]int64, 0, lodSize),
+		Timestamps: make([]float64, 0, lodSize),
 		IndexMap:   make([]int64, 0, lodSize),
 		Values:     make([]float64, 0, lodSize),
 	}
@@ -221,7 +297,7 @@ func (fg *Full_graph) buildLODLevelFromStored(rawData []float64, step int) *LOD_
 		lod.Timestamps = append(lod.Timestamps, fg.FullTimeStamps[i])
 		lod.IndexMap = append(lod.IndexMap, int64(i))
 
-		lod.Values = append(lod.Values, float64(rawData[i]))
+		lod.Values = append(lod.Values, rawData[i])
 	}
 
 	return lod
@@ -229,9 +305,10 @@ func (fg *Full_graph) buildLODLevelFromStored(rawData []float64, step int) *LOD_
 
 func (fg *Full_graph) calculateYRangeForEachGraph() error {
 	if len(fg.Graphs) == 0 {
-		return fmt.Errorf("No graphs dumbass")
+		return fmt.Errorf("no graphs dumbass")
 	}
 	for i, graph := range fg.Graphs {
+		// Always calculate unified range (used when UseSplitAxis is false)
 		minVal := fg.ViewableChannels[fg.Graphs[i].DataChannels[0]].DataLines[1].Values[0]
 		maxVal := minVal
 		for _, channelName := range graph.DataChannels {
@@ -252,6 +329,43 @@ func (fg *Full_graph) calculateYRangeForEachGraph() error {
 
 		fg.Graphs[i].YRange = [2]float64{minVal - padding, maxVal + padding}
 
+		// Calculate per-channel ranges (used when UseSplitAxis is true)
+		fg.Graphs[i].ChannelRanges = make(map[string][2]float64)
+		usedRanges := make(map[[2]float64]bool)
+
+		for _, channelName := range graph.DataChannels {
+			channelData := fg.ViewableChannels[channelName].DataLines[1].Values
+			if len(channelData) == 0 {
+				continue
+			}
+
+			chMin := channelData[0]
+			chMax := channelData[0]
+			for _, val := range channelData {
+				if val < chMin {
+					chMin = val
+				}
+				if val > chMax {
+					chMax = val
+				}
+			}
+
+			chPadding := (chMax - chMin) * 0.1
+			if chPadding == 0 {
+				chPadding = 1
+			}
+
+			channelRange := [2]float64{chMin - chPadding, chMax + chPadding}
+
+			// Ensure no two channels have identical ranges by adding small perturbation
+			for usedRanges[channelRange] {
+				channelRange[0] -= 0.001
+				channelRange[1] += 0.001
+			}
+			usedRanges[channelRange] = true
+
+			fg.Graphs[i].ChannelRanges[channelName] = channelRange
+		}
 	}
 	return nil
 
@@ -276,6 +390,7 @@ func (fg *Full_graph) GetGraphMetadata() (*Graph_metadata, error) {
 			Index:        graph.Index,
 			Title:        graph.Title,
 			YRange:       graph.YRange,
+			UseSplitAxis: graph.UseSplitAxis,
 			ChannelNames: channelNames,
 			ChannelCount: len(channelNames),
 		}
@@ -292,7 +407,7 @@ func (fg *Full_graph) GetGraphMetadata() (*Graph_metadata, error) {
 
 	return &Graph_metadata{
 		TotalPoints:   len(fg.FullTimeStamps),
-		TimeRange:     [2]int64{fg.FullTimeStamps[0], fg.FullTimeStamps[len(fg.FullTimeStamps)-1]},
+		TimeRange:     [2]float64{fg.FullTimeStamps[0], fg.FullTimeStamps[len(fg.FullTimeStamps)-1]},
 		NumGraphs:     len(fg.Graphs),
 		GraphInfo:     graphInfo,
 		AvailableLODs: availableLODs,
@@ -352,10 +467,11 @@ func (fg *Full_graph) GetViewportData(req Viewport_request) (*Viewport_response,
 	}
 	for _, graph := range fg.Graphs {
 		graphViewport := Graph_viewport{
-			Index:    graph.Index,
-			Title:    graph.Title,
-			YRange:   graph.YRange,
-			Channels: make([]Channel_viewport, 0, len(graph.DataChannels)),
+			Index:        graph.Index,
+			Title:        graph.Title,
+			YRange:       graph.YRange,
+			UseSplitAxis: graph.UseSplitAxis,
+			Channels:     make([]Channel_viewport, 0, len(graph.DataChannels)),
 		}
 
 		for _, channelName := range graph.DataChannels {
@@ -369,11 +485,20 @@ func (fg *Full_graph) GetViewportData(req Viewport_request) (*Viewport_response,
 				continue
 			}
 
+			// Get per-channel Y-range from ChannelRanges map
+			channelYRange := [2]float64{0, 0}
+			if graph.UseSplitAxis {
+				if chRange, exists := graph.ChannelRanges[channelName]; exists {
+					channelYRange = chRange
+				}
+			}
+
 			channelViewport := Channel_viewport{
 				Name:   channel.Name,
 				Unit:   channel.Unit,
 				Color:  channel.Color,
 				Values: lodData.Values[startIdx:endIdx],
+				YRange: channelYRange,
 			}
 
 			graphViewport.Channels = append(graphViewport.Channels, channelViewport)
@@ -393,7 +518,7 @@ func (fg *Full_graph) GetViewportData(req Viewport_request) (*Viewport_response,
 
 }
 
-func (fg *Full_graph) SetCursorPosition(timestamp int64) error {
+func (fg *Full_graph) SetCursorPosition(timestamp float64) error {
 	fg.mutex.Lock()
 	defer fg.mutex.Unlock()
 
@@ -433,18 +558,21 @@ func (fg *Full_graph) GetCursorData() (map[string]float64, error) {
 	return result, nil
 }
 
-func (fg *Full_graph) AddBreakLine(timestamp int64) error {
+func (fg *Full_graph) AddBreakLine(timestamp float64) error {
 	fg.mutex.Lock()
 	defer fg.mutex.Unlock()
 
 	idx := fg.findTimeIndex(fg.FullTimeStamps, timestamp)
-	originalIdx := int64(idx)
+	if idx < 0 || idx >= len(fg.FullTimeStamps) {
+		return fmt.Errorf("timestamp out of range")
+	}
 
-	fg.BreakLines = append(fg.BreakLines, originalIdx)
+	// Store the actual timestamp value (not index)
+	fg.BreakLines = append(fg.BreakLines, fg.FullTimeStamps[idx])
 	return nil
 }
 
-func (fg *Full_graph) RemoveBreakLine(timestamp int64) error {
+func (fg *Full_graph) RemoveBreakLine(timestamp float64) error {
 	fg.mutex.Lock()
 	defer fg.mutex.Unlock()
 
@@ -460,23 +588,26 @@ func (fg *Full_graph) RemoveBreakLine(timestamp int64) error {
 	return nil
 }
 
-func (fg *Full_graph) AddExportMarker(timestamp int64, isStart bool) error {
+func (fg *Full_graph) AddExportMarker(timestamp float64, isStart bool) error {
 	fg.mutex.Lock()
 	defer fg.mutex.Unlock()
 
 	idx := fg.findTimeIndex(fg.FullTimeStamps, timestamp)
-	originalIdx := int64(idx)
+	if idx < 0 || idx >= len(fg.FullTimeStamps) {
+		return fmt.Errorf("timestamp out of range")
+	}
 
+	// Store the actual timestamp value (not index)
 	if isStart {
-		fg.ExportStartLines = append(fg.ExportStartLines, originalIdx)
+		fg.ExportStartLines = append(fg.ExportStartLines, fg.FullTimeStamps[idx])
 	} else {
-		fg.ExportEndLines = append(fg.ExportEndLines, originalIdx)
+		fg.ExportEndLines = append(fg.ExportEndLines, fg.FullTimeStamps[idx])
 	}
 
 	return nil
 }
 
-func (fg *Full_graph) RemoveExportMarker(timestamp int64, isStart bool) error {
+func (fg *Full_graph) RemoveExportMarker(timestamp float64, isStart bool) error {
 	fg.mutex.Lock()
 	defer fg.mutex.Unlock()
 
@@ -497,9 +628,298 @@ func (fg *Full_graph) RemoveExportMarker(timestamp int64, isStart bool) error {
 	return nil
 }
 
+func (fg *Full_graph) GetAvailableChannels() ([]Channel_info, error) {
+	fg.mutex.RLock()
+	defer fg.mutex.RUnlock()
+
+	channels := make([]Channel_info, 0, len(fg.ViewableChannels))
+
+	for _, channel := range fg.ViewableChannels {
+		channels = append(channels, Channel_info{
+			Name:       channel.Name,
+			Unit:       channel.Unit,
+			Color:      channel.Color,
+			GraphIndex: channel.GraphIndex,
+		})
+	}
+
+	return channels, nil
+}
+
+func (fg *Full_graph) AddChannelToGraph(channelName string, graphIndex int) error {
+	fg.mutex.Lock()
+	defer fg.mutex.Unlock()
+
+	channel, exists := fg.ViewableChannels[channelName]
+	if !exists {
+		return fmt.Errorf("channel '%s' not found", channelName)
+	}
+
+	// Create new graph if graphIndex is -1 or doesn't exist
+	if graphIndex == -1 || graphIndex >= len(fg.Graphs) {
+		graphIndex = len(fg.Graphs)
+		fg.Graphs = append(fg.Graphs, Solo_graph{
+			Index:         graphIndex,
+			Title:         fmt.Sprintf("Graph %d", graphIndex+1),
+			YRange:        [2]float64{0, 0}, // Will be calculated
+			DataChannels:  []string{},
+			UseSplitAxis:  false,
+			ChannelRanges: make(map[string][2]float64),
+		})
+	}
+
+	for _, existingChannel := range fg.Graphs[graphIndex].DataChannels {
+		if existingChannel == channelName {
+			return fmt.Errorf("channel '%s' already in graph %d", channelName, graphIndex)
+		}
+	}
+
+	fg.Graphs[graphIndex].DataChannels = append(fg.Graphs[graphIndex].DataChannels, channelName)
+	channel.GraphIndex = graphIndex
+
+	if err := fg.calculateYRangeForEachGraph(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (fg *Full_graph) RemoveChannelFromGraph(channelName string) error {
+	fg.mutex.Lock()
+	defer fg.mutex.Unlock()
+
+	channel, exists := fg.ViewableChannels[channelName]
+	if !exists {
+		return fmt.Errorf("channel '%s' not found", channelName)
+	}
+
+	if channel.GraphIndex < 0 || channel.GraphIndex >= len(fg.Graphs) {
+		return fmt.Errorf("channel '%s' not assigned to any graph", channelName)
+	}
+
+	// Remove from graph's channel list
+	graph := &fg.Graphs[channel.GraphIndex]
+	newChannels := make([]string, 0, len(graph.DataChannels)-1)
+
+	for _, ch := range graph.DataChannels {
+		if ch != channelName {
+			newChannels = append(newChannels, ch)
+		}
+	}
+
+	graph.DataChannels = newChannels
+	channel.GraphIndex = -1
+
+	// Remove empty graphs and reindex
+	fg.removeEmptyGraphs()
+
+	// Recalculate Y ranges for remaining graphs
+	if err := fg.calculateYRangeForEachGraph(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (fg *Full_graph) MoveChannelToGraph(channelName string, newGraphIndex int) error {
+	fg.mutex.Lock()
+	defer fg.mutex.Unlock()
+
+	channel, exists := fg.ViewableChannels[channelName]
+	if !exists {
+		return fmt.Errorf("channel '%s' not found", channelName)
+	}
+
+	// Remove from current graph if assigned
+	if channel.GraphIndex >= 0 && channel.GraphIndex < len(fg.Graphs) {
+		graph := &fg.Graphs[channel.GraphIndex]
+		newChannels := make([]string, 0, len(graph.DataChannels)-1)
+
+		for _, ch := range graph.DataChannels {
+			if ch != channelName {
+				newChannels = append(newChannels, ch)
+			}
+		}
+
+		graph.DataChannels = newChannels
+	}
+
+	// Create new graph if needed
+	if newGraphIndex == -1 || newGraphIndex >= len(fg.Graphs) {
+		newGraphIndex = len(fg.Graphs)
+		fg.Graphs = append(fg.Graphs, Solo_graph{
+			Index:         newGraphIndex,
+			Title:         fmt.Sprintf("Graph %d", newGraphIndex+1),
+			YRange:        [2]float64{0, 0},
+			DataChannels:  []string{},
+			UseSplitAxis:  false,
+			ChannelRanges: make(map[string][2]float64),
+		})
+	}
+
+	// Add to new graph
+	fg.Graphs[newGraphIndex].DataChannels = append(fg.Graphs[newGraphIndex].DataChannels, channelName)
+	channel.GraphIndex = newGraphIndex
+
+	// Remove empty graphs and reindex
+	fg.removeEmptyGraphs()
+
+	// Recalculate Y ranges
+	if err := fg.calculateYRangeForEachGraph(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (fg *Full_graph) SetGraphTitle(graphIndex int, title string) error {
+	fg.mutex.Lock()
+	defer fg.mutex.Unlock()
+
+	if graphIndex < 0 || graphIndex >= len(fg.Graphs) {
+		return fmt.Errorf("graph index %d out of range", graphIndex)
+	}
+
+	fg.Graphs[graphIndex].Title = title
+	return nil
+}
+
+func (fg *Full_graph) SetGraphSplitAxisMode(graphIndex int, useSplitAxis bool) error {
+	fg.mutex.Lock()
+	defer fg.mutex.Unlock()
+
+	if graphIndex < 0 || graphIndex >= len(fg.Graphs) {
+		return fmt.Errorf("graph index %d out of range", graphIndex)
+	}
+
+	fg.Graphs[graphIndex].UseSplitAxis = useSplitAxis
+
+	// Recalculate Y ranges to ensure ChannelRanges are updated
+	if err := fg.calculateYRangeForEachGraph(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (fg *Full_graph) RerollChannelColors() error {
+	fg.mutex.Lock()
+	defer fg.mutex.Unlock()
+
+	// Reassign colors to all channels
+	channelIndex := 0
+	for _, channel := range fg.ViewableChannels {
+		channel.Color = generateVibrantColor(channelIndex)
+		channelIndex++
+	}
+
+	return nil
+}
+
+func (fg *Full_graph) RemoveGraph(graphIndex int) error {
+	fg.mutex.Lock()
+	defer fg.mutex.Unlock()
+
+	if graphIndex < 0 || graphIndex >= len(fg.Graphs) {
+		return fmt.Errorf("graph index %d out of range", graphIndex)
+	}
+
+	// Unassign all channels in this graph
+	for _, channelName := range fg.Graphs[graphIndex].DataChannels {
+		if channel, exists := fg.ViewableChannels[channelName]; exists {
+			channel.GraphIndex = -1
+		}
+	}
+
+	// Remove graph
+	fg.Graphs = append(fg.Graphs[:graphIndex], fg.Graphs[graphIndex+1:]...)
+
+	// Reindex remaining graphs
+	for i := range fg.Graphs {
+		fg.Graphs[i].Index = i
+		// Update channel graph indices
+		for _, channelName := range fg.Graphs[i].DataChannels {
+			if channel, exists := fg.ViewableChannels[channelName]; exists {
+				channel.GraphIndex = i
+			}
+		}
+	}
+
+	return nil
+}
+
+func (fg *Full_graph) removeEmptyGraphs() {
+	nonEmptyGraphs := make([]Solo_graph, 0, len(fg.Graphs))
+
+	for _, graph := range fg.Graphs {
+		if len(graph.DataChannels) > 0 {
+			nonEmptyGraphs = append(nonEmptyGraphs, graph)
+		}
+	}
+
+	// Reindex graphs
+	for i := range nonEmptyGraphs {
+		nonEmptyGraphs[i].Index = i
+
+		// Update channel graph indices
+		for _, channelName := range nonEmptyGraphs[i].DataChannels {
+			if channel, exists := fg.ViewableChannels[channelName]; exists {
+				channel.GraphIndex = i
+			}
+		}
+	}
+
+	fg.Graphs = nonEmptyGraphs
+}
+
+func (fg *Full_graph) ConfigureGraphsFromLayout(configs []Graph_configuration) error {
+	fg.mutex.Lock()
+	defer fg.mutex.Unlock()
+
+	// Clear existing graphs
+	fg.Graphs = make([]Solo_graph, 0, len(configs))
+
+	// Reset all channel graph indices
+	for _, channel := range fg.ViewableChannels {
+		channel.GraphIndex = -1
+	}
+
+	// Create new graphs
+	for i, config := range configs {
+		// Validate all channels exist
+		for _, channelName := range config.ChannelNames {
+			if _, exists := fg.ViewableChannels[channelName]; !exists {
+				return fmt.Errorf("channel '%s' not found", channelName)
+			}
+		}
+
+		// Create graph
+		fg.Graphs = append(fg.Graphs, Solo_graph{
+			Index:         i,
+			Title:         config.Title,
+			YRange:        [2]float64{0, 0}, // Will be calculated
+			DataChannels:  config.ChannelNames,
+			UseSplitAxis:  false,
+			ChannelRanges: make(map[string][2]float64),
+		})
+
+		// Update channel graph indices
+		for _, channelName := range config.ChannelNames {
+			fg.ViewableChannels[channelName].GraphIndex = i
+		}
+	}
+
+	// Calculate Y ranges
+	if err := fg.calculateYRangeForEachGraph(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // Utility shit:
 
-func (fg *Full_graph) selectLODLevel(startTime int64, endTime int64, maxPoints int) int {
+func (fg *Full_graph) selectLODLevel(startTime float64, endTime float64, maxPoints int) int {
 	fullStartIdx := fg.findTimeIndex(fg.FullTimeStamps, startTime)
 	fullEndIdx := fg.findTimeIndex(fg.FullTimeStamps, endTime)
 	fullRangeSize := fullEndIdx - fullStartIdx
@@ -508,10 +928,23 @@ func (fg *Full_graph) selectLODLevel(startTime int64, endTime int64, maxPoints i
 		return 1
 	}
 
-	for step := 1; ; step *= 2 {
-		estimatedPoints := fullRangeSize / step
+	// Count total channels across all graphs that will be rendered
+	totalChannelsToRender := 0
+	for _, graph := range fg.Graphs {
+		totalChannelsToRender += len(graph.DataChannels)
+	}
 
-		if estimatedPoints <= maxPoints {
+	// If no channels are assigned to graphs yet, default to 1
+	if totalChannelsToRender == 0 {
+		totalChannelsToRender = 1
+	}
+
+	for step := 1; ; step *= 2 {
+		pointsPerChannel := fullRangeSize / step
+		// Multiply by total channels across ALL graphs
+		estimatedTotalPoints := pointsPerChannel * totalChannelsToRender
+
+		if estimatedTotalPoints <= maxPoints {
 			for _, channel := range fg.ViewableChannels {
 				if _, exists := channel.DataLines[step]; exists {
 					return step
@@ -536,7 +969,7 @@ func (fg *Full_graph) selectLODLevel(startTime int64, endTime int64, maxPoints i
 
 }
 
-func (fg *Full_graph) findTimeIndex(timestamps []int64, targetTime int64) int {
+func (fg *Full_graph) findTimeIndex(timestamps []float64, targetTime float64) int {
 	if len(timestamps) == 0 {
 		return 0
 	}
@@ -562,26 +995,22 @@ func (fg *Full_graph) findTimeIndex(timestamps []int64, targetTime int64) int {
 		}
 	}
 	if left > 0 &&
-		absDiff(targetTime, timestamps[left-1]) < absDiff(timestamps[left], targetTime) {
+		absDiffFloat(targetTime, timestamps[left-1]) < absDiffFloat(timestamps[left], targetTime) {
 		return left - 1
 	}
 	return left
 }
 
-func (fg *Full_graph) findClosestMarker(markers []int64, timestamp int64) int {
+func (fg *Full_graph) findClosestMarker(markers []float64, timestamp float64) int {
 	if len(markers) == 0 {
 		return -1
 	}
 
 	closestIdx := 0
-	minDistance := absDiff(fg.FullTimeStamps[markers[0]], timestamp)
+	minDistance := absDiffFloat(markers[0], timestamp)
 
-	for i, markerIdx := range markers {
-		if int(markerIdx) >= len(fg.FullTimeStamps) {
-			continue
-		}
-		markerTime := fg.FullTimeStamps[markerIdx]
-		distance := absDiff(markerTime, timestamp)
+	for i, markerTime := range markers {
+		distance := absDiffFloat(markerTime, timestamp)
 		if distance < minDistance {
 			minDistance = distance
 			closestIdx = i
@@ -592,7 +1021,7 @@ func (fg *Full_graph) findClosestMarker(markers []int64, timestamp int64) int {
 }
 
 func (fg *Full_graph) filterMarkersToViewport(
-	markers []int64,
+	markers []float64,
 	lodLevel *LOD_data_line,
 	startIdx, endIdx int,
 ) []int {
@@ -601,13 +1030,7 @@ func (fg *Full_graph) filterMarkersToViewport(
 	viewportStartTime := lodLevel.Timestamps[startIdx]
 	viewportEndTime := lodLevel.Timestamps[endIdx-1]
 
-	for _, markerOriginalIdx := range markers {
-		if int(markerOriginalIdx) >= len(fg.FullTimeStamps) {
-			continue
-		}
-
-		markerTime := fg.FullTimeStamps[markerOriginalIdx]
-
+	for _, markerTime := range markers {
 		if markerTime >= viewportStartTime && markerTime <= viewportEndTime {
 			relativeIdx := fg.findTimeIndex(
 				lodLevel.Timestamps[startIdx:endIdx],
@@ -639,4 +1062,52 @@ func absDiff(a, b int64) int64 {
 		return a - b
 	}
 	return b - a
+}
+
+func absDiffFloat(a, b float64) float64 {
+	if a > b {
+		return a - b
+	}
+	return b - a
+}
+
+// generateVibrantColor generates a vibrant color based on index
+// Uses HSL color space with high saturation for vibrant colors
+func generateVibrantColor(index int) string {
+	// Golden ratio conjugate for better color distribution
+	goldenRatioConjugate := 0.618033988749895
+	hue := float64(index) * goldenRatioConjugate
+	hue = hue - float64(int(hue)) // Keep fractional part
+
+	// Convert HSL to RGB (S=0.8, L=0.5 for vibrant colors)
+	h := hue * 360
+	s := 0.8
+	l := 0.5
+
+	c := (1 - absDiffFloat(2*l-1, 0)) * s
+	x := c * (1 - absDiffFloat(float64(int(h/60)%2), 1))
+	m := l - c/2
+
+	var r, g, b float64
+
+	if h >= 0 && h < 60 {
+		r, g, b = c, x, 0
+	} else if h >= 60 && h < 120 {
+		r, g, b = x, c, 0
+	} else if h >= 120 && h < 180 {
+		r, g, b = 0, c, x
+	} else if h >= 180 && h < 240 {
+		r, g, b = 0, x, c
+	} else if h >= 240 && h < 300 {
+		r, g, b = x, 0, c
+	} else {
+		r, g, b = c, 0, x
+	}
+
+	// Convert to 0-255 range
+	rInt := int((r + m) * 255)
+	gInt := int((g + m) * 255)
+	bInt := int((b + m) * 255)
+
+	return fmt.Sprintf("#%02X%02X%02X", rInt, gInt, bInt)
 }

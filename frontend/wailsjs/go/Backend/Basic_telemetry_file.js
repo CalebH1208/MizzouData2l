@@ -18,8 +18,8 @@ export function LogFile_to_BTF() {
   return window['go']['Backend']['Basic_telemetry_file']['LogFile_to_BTF']();
 }
 
-export function Read_BTF() {
-  return window['go']['Backend']['Basic_telemetry_file']['Read_BTF']();
+export function Read_BTF(arg1) {
+  return window['go']['Backend']['Basic_telemetry_file']['Read_BTF'](arg1);
 }
 
 export function Write_BTF(arg1) {

@@ -752,7 +752,7 @@ const TimeSeriesChart: React.FC<Props> = ({
         }}
       >
         <div>LOD: {processedLODLines[0]?.lodStep ?? 1}x | Zoom: {transform.k.toFixed(1)}x</div>
-        <div>Rendered: {allDataPoints.length.toLocaleString()}{allDataPoints.length > 20000 ? ' ⚠️' : ''}</div>
+        <div>Rendered: {allDataPoints.length.toLocaleString()}{allDataPoints.length > 20000 ? ' [HIGH]' : ''}</div>
         <div style={{ fontSize: '9px', opacity: 0.8 }}>
           {(() => {
             const lodStep = processedLODLines[0]?.lodStep ?? 1;

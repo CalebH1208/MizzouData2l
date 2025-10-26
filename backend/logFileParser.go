@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"os/exec"
 	"slices"
 	"strconv"
 )
@@ -60,11 +59,10 @@ func (file *Telemetry_file) Load_telemetry_file(path string) error {
 	log.Print(path)
 	_, err := os.Stat(path + "\\fullData.csv")
 	if errors.Is(err, os.ErrNotExist) {
-		cmd := exec.Command("python", "DataFileUnification.py", path)
-		cmd.Dir = "./backend/"
-		output, err := cmd.CombinedOutput() // Capture both stdout and stderr
+		// Call Go implementation of data unification
+		err := ProcessDirectory(path)
 		if err != nil {
-			return fmt.Errorf("data unification failed: %v, output: %s", err, string(output))
+			return fmt.Errorf("data unification failed: %w", err)
 		}
 	}
 	csvData, err := os.Open(path + "\\fullData.csv")

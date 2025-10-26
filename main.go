@@ -17,7 +17,8 @@ func main() {
 	// Create an instance of the app structure
 	app := NewApp()
 	logFileParser := Backend.CreateNewTelemetryFile()
-	StoredFileManager := Backend.New_BTF(logFileParser)
+	storedFileManager := Backend.New_BTF(logFileParser)
+	tuneGraph := Backend.New_full_graph(storedFileManager)
 
 	err := wails.Run(&options.App{
 		Title:             "MizzouDataTool",
@@ -32,7 +33,8 @@ func main() {
 		Bind: []interface{}{
 			app,
 			logFileParser,
-			StoredFileManager,
+			storedFileManager,
+			tuneGraph,
 		},
 	})
 
