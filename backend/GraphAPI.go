@@ -3,7 +3,10 @@ package Backend
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
+	"time"
 )
 
 const MAX_POINTS_ON_SCREEN int = 25000
@@ -142,6 +145,15 @@ func (fg *Full_graph) InitializeFromStoredFile() error {
 	fg.mutex.Lock()
 	defer fg.mutex.Unlock()
 
+	// Clear all previous state before loading new data
+	fg.Graphs = make([]Solo_graph, 0)
+	fg.BreakLines = make([]float64, 0)
+	fg.ExportStartLines = make([]float64, 0)
+	fg.ExportEndLines = make([]float64, 0)
+	fg.CursorPos = 0
+	fg.ViewableChannels = make(map[string]*Data_channel)
+	fmt.Println("[GraphAPI] Cleared previous graph state for new data load")
+
 	if fg.stored_file_manager == nil {
 		return fmt.Errorf("need a file manager")
 	}
@@ -186,11 +198,9 @@ func (fg *Full_graph) InitializeFromStoredFile() error {
 
 	fmt.Printf("[GraphAPI] Pre-calculating LOD levels (1 to %d)...\n", maxLODStep)
 
-	// Assign vibrant colors to channels
-	channelIndex := 0
+	// Assign vibrant colors to channels based on their names
 	for _, channel := range fg.ViewableChannels {
-		channel.Color = generateVibrantColor(channelIndex)
-		channelIndex++
+		channel.Color = generateVibrantColor(channel.Name)
 	}
 
 	// Generate LOD levels concurrently for all channels
@@ -597,11 +607,22 @@ func (fg *Full_graph) AddExportMarker(timestamp float64, isStart bool) error {
 		return fmt.Errorf("timestamp out of range")
 	}
 
+	markerType := "END"
+	if isStart {
+		markerType = "START"
+	}
+
+	actualTimestamp := fg.FullTimeStamps[idx]
+
 	// Store the actual timestamp value (not index)
 	if isStart {
-		fg.ExportStartLines = append(fg.ExportStartLines, fg.FullTimeStamps[idx])
+		fg.ExportStartLines = append(fg.ExportStartLines, actualTimestamp)
+		fmt.Printf("[AddExportMarker] Added %s marker: requested=%.6f, snapped=%.6f (idx=%d). Total starts: %d\n",
+			markerType, timestamp, actualTimestamp, idx, len(fg.ExportStartLines))
 	} else {
-		fg.ExportEndLines = append(fg.ExportEndLines, fg.FullTimeStamps[idx])
+		fg.ExportEndLines = append(fg.ExportEndLines, actualTimestamp)
+		fmt.Printf("[AddExportMarker] Added %s marker: requested=%.6f, snapped=%.6f (idx=%d). Total ends: %d\n",
+			markerType, timestamp, actualTimestamp, idx, len(fg.ExportEndLines))
 	}
 
 	return nil
@@ -642,6 +663,11 @@ func (fg *Full_graph) GetAvailableChannels() ([]Channel_info, error) {
 			GraphIndex: channel.GraphIndex,
 		})
 	}
+
+	// Sort channels alphabetically by name
+	sort.Slice(channels, func(i, j int) bool {
+		return strings.ToUpper(channels[i].Name) < strings.ToUpper(channels[j].Name)
+	})
 
 	return channels, nil
 }
@@ -802,16 +828,21 @@ func (fg *Full_graph) SetGraphSplitAxisMode(graphIndex int, useSplitAxis bool) e
 	return nil
 }
 
-func (fg *Full_graph) RerollChannelColors() error {
+// RegenerateChannelColor regenerates the color for a single channel
+// Uses a random salt added to the channel name to generate a new color
+func (fg *Full_graph) RegenerateChannelColor(channelName string) error {
 	fg.mutex.Lock()
 	defer fg.mutex.Unlock()
 
-	// Reassign colors to all channels
-	channelIndex := 0
-	for _, channel := range fg.ViewableChannels {
-		channel.Color = generateVibrantColor(channelIndex)
-		channelIndex++
+	channel, exists := fg.ViewableChannels[channelName]
+	if !exists {
+		return fmt.Errorf("channel %s not found", channelName)
 	}
+
+	// Add a random salt to the name to generate a different color
+	// Use current timestamp as salt to ensure uniqueness
+	saltedName := fmt.Sprintf("%s_%d", channelName, time.Now().UnixNano())
+	channel.Color = generateVibrantColor(saltedName)
 
 	return nil
 }
@@ -915,6 +946,150 @@ func (fg *Full_graph) ConfigureGraphsFromLayout(configs []Graph_configuration) e
 	}
 
 	return nil
+}
+
+// ExtractRawDataBetweenTimes creates a Data_fragment with all channels' data
+// between the specified start and end times (using full resolution LOD=1)
+func (fg *Full_graph) ExtractRawDataBetweenTimes(startTime, endTime float64) (*Data_fragment, error) {
+	fg.mutex.RLock()
+	defer fg.mutex.RUnlock()
+
+	if len(fg.FullTimeStamps) == 0 {
+		return nil, fmt.Errorf("no data loaded in graph")
+	}
+
+	if startTime >= endTime {
+		return nil, fmt.Errorf("start time must be less than end time")
+	}
+
+	// Find indices in full timestamps
+	startIdx := fg.findTimeIndex(fg.FullTimeStamps, startTime)
+	endIdx := fg.findTimeIndex(fg.FullTimeStamps, endTime)
+
+	if endIdx <= startIdx {
+		endIdx = startIdx + 1
+	}
+	if endIdx > len(fg.FullTimeStamps) {
+		endIdx = len(fg.FullTimeStamps)
+	}
+
+	// Create new fragment
+	fragment := NewDataFragment(fg.FullTimeStamps[startIdx], fg.FullTimeStamps[endIdx-1])
+	fragment.TimeStamps = make([]float64, endIdx-startIdx)
+	copy(fragment.TimeStamps, fg.FullTimeStamps[startIdx:endIdx])
+
+	// Extract all channels using full resolution (LOD step = 1)
+	for channelName, channel := range fg.ViewableChannels {
+		lodData, exists := channel.DataLines[1]
+		if !exists {
+			return nil, fmt.Errorf("channel '%s' does not have full resolution data", channelName)
+		}
+
+		// Find corresponding indices in LOD data (should match since step=1)
+		lodStartIdx := fg.findTimeIndex(lodData.Timestamps, startTime)
+		lodEndIdx := fg.findTimeIndex(lodData.Timestamps, endTime)
+
+		if lodEndIdx <= lodStartIdx {
+			lodEndIdx = lodStartIdx + 1
+		}
+		if lodEndIdx > len(lodData.Values) {
+			lodEndIdx = len(lodData.Values)
+		}
+
+		// Create fragment channel
+		fragmentChannel := &Fragment_channel{
+			Name:   channelName,
+			Unit:   channel.Unit,
+			Values: make([]float64, lodEndIdx-lodStartIdx),
+		}
+		copy(fragmentChannel.Values, lodData.Values[lodStartIdx:lodEndIdx])
+
+		fragment.Channels[channelName] = fragmentChannel
+	}
+	//fmt.Printf("fragment: %v\n", fragment)
+	return fragment, nil
+}
+
+// GetExportMarkerPairs returns paired [start, end] timestamps from ExportStartLines and ExportEndLines
+// Logic: "start always starts parsing, end always stops parsing"
+// Uses state machine: START enters parsing mode, END exits and outputs fragment, duplicate STARTs ignored
+// Example: Timeline [Start₁@15, Start₂@29, End₁@68, Start₃@205, End₂@290] → [[15, 68], [205, 290]]
+func (fg *Full_graph) GetExportMarkerPairs() ([][2]float64, error) {
+	fg.mutex.RLock()
+	defer fg.mutex.RUnlock()
+
+	if len(fg.ExportStartLines) == 0 || len(fg.ExportEndLines) == 0 {
+		return nil, fmt.Errorf("need at least one start and one end marker")
+	}
+
+	// Create a timeline of all markers with their types
+	type Marker struct {
+		time    float64
+		isStart bool
+	}
+
+	markers := make([]Marker, 0, len(fg.ExportStartLines)+len(fg.ExportEndLines))
+
+	for _, t := range fg.ExportStartLines {
+		markers = append(markers, Marker{time: t, isStart: true})
+	}
+
+	for _, t := range fg.ExportEndLines {
+		markers = append(markers, Marker{time: t, isStart: false})
+	}
+
+	// Sort markers by time (stable sort to ensure consistent ordering)
+	sort.SliceStable(markers, func(i, j int) bool {
+		if markers[i].time == markers[j].time {
+			// If times are equal, START markers come before END markers
+			// This ensures START-END pairs at same timestamp work correctly
+			return markers[i].isStart && !markers[j].isStart
+		}
+		return markers[i].time < markers[j].time
+	})
+
+	fmt.Printf("[GetExportMarkerPairs] Found %d start markers and %d end markers\n", len(fg.ExportStartLines), len(fg.ExportEndLines))
+	fmt.Printf("[GetExportMarkerPairs] Sorted marker timeline:\n")
+	for i, m := range markers {
+		markerType := "END"
+		if m.isStart {
+			markerType = "START"
+		}
+		fmt.Printf("  [%d] %.6f - %s\n", i, m.time, markerType)
+	}
+
+	// State machine: walk through timeline and pair markers
+	pairs := make([][2]float64, 0)
+	isParsing := false
+	var currentStart float64
+
+	for _, marker := range markers {
+		if marker.isStart {
+			if !isParsing {
+				// Start parsing: enter parsing mode and record start time
+				isParsing = true
+				currentStart = marker.time
+				fmt.Printf("[GetExportMarkerPairs] START marker at %.6f - entering parsing mode\n", marker.time)
+			} else {
+				fmt.Printf("[GetExportMarkerPairs] START marker at %.6f - IGNORED (already parsing)\n", marker.time)
+			}
+		} else { // marker is END
+			if isParsing {
+				// Stop parsing: exit parsing mode and output fragment
+				pairs = append(pairs, [2]float64{currentStart, marker.time})
+				fmt.Printf("[GetExportMarkerPairs] END marker at %.6f - created pair [%.6f, %.6f]\n", marker.time, currentStart, marker.time)
+				isParsing = false
+			} else {
+				fmt.Printf("[GetExportMarkerPairs] END marker at %.6f - IGNORED (not parsing)\n", marker.time)
+			}
+		}
+	}
+
+	if len(pairs) == 0 {
+		return nil, fmt.Errorf("no valid marker pairs found")
+	}
+	fmt.Printf("[GetExportMarkerPairs] Total pairs created: %d\n", len(pairs))
+	return pairs, nil
 }
 
 // Utility shit:
@@ -1071,12 +1246,26 @@ func absDiffFloat(a, b float64) float64 {
 	return b - a
 }
 
-// generateVibrantColor generates a vibrant color based on index
+// generateVibrantColor generates a vibrant color based on channel name
 // Uses HSL color space with high saturation for vibrant colors
-func generateVibrantColor(index int) string {
+// Colors are deterministic - same name always produces the same color
+func generateVibrantColor(channelName string) string {
+	// FNV-1a hash algorithm for better distribution
+	// This provides much better color variation even for similar names
+	const (
+		fnvOffsetBasis = 2166136261
+		fnvPrime       = 16777619
+	)
+
+	hash := uint32(fnvOffsetBasis)
+	for i := 0; i < len(channelName); i++ {
+		hash ^= uint32(channelName[i])
+		hash *= fnvPrime
+	}
+
 	// Golden ratio conjugate for better color distribution
 	goldenRatioConjugate := 0.618033988749895
-	hue := float64(index) * goldenRatioConjugate
+	hue := float64(hash) * goldenRatioConjugate
 	hue = hue - float64(int(hue)) // Keep fractional part
 
 	// Convert HSL to RGB (S=0.8, L=0.5 for vibrant colors)

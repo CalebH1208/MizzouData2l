@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Read_BTF } from '../../wailsjs/go/backend/Basic_telemetry_file'
 import {InitializeFromStoredFile} from '../../wailsjs/go/Backend/Full_graph'
+import { ExtractFragmentsFromMarkers, GetAllFragments } from '../../wailsjs/go/Backend/Tool_manager'
 import { OpenFileDialog } from "../../wailsjs/go/main/App"
 import TuneGraph from './TuneGraph';
 import ChannelManager from './ChannelManager';
@@ -52,16 +53,33 @@ const [showChannelManager, setShowChannelManager] = useState(false);
     }
 
     const handleStartGraph = async () => {
-      
+
       try {
         const pathElement = document.getElementById("path_box");
-          
+
         await Read_BTF((pathElement as HTMLInputElement).value);
         await InitializeFromStoredFile();
 
         setGraphUpdateTrigger(prev => prev + 1);
       } catch(e) {
         LogPrint(`Error loading graph data: ${e}`)
+      }
+    }
+
+    const handleAnalysis = async () => {
+      try {
+        // Extract fragments from the placed export markers
+        const fragmentIDs = await ExtractFragmentsFromMarkers();
+
+        if (fragmentIDs.length === 0) {
+          LogPrint('No valid marker pairs found. Please place export start/end markers first.');
+          return;
+        }
+
+        // Navigate to tools page
+        navigate('/tools');
+      } catch(e) {
+        LogPrint(`Error extracting fragments: ${e}`)
       }
     }
 
@@ -230,6 +248,33 @@ const [showChannelManager, setShowChannelManager] = useState(false);
         >
           Channel Manager
         </button>
+
+        <button
+          onClick={handleAnalysis}
+          style={{
+            backgroundColor: '#4ade80',
+            color: 'black',
+            border: '2px solid #4ade80',
+            borderRadius: '6px',
+            padding: '6px 12px',
+            fontSize: '13px',
+            fontWeight: 'bold',
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+            flexShrink: 0,
+            whiteSpace: 'nowrap'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = '#ffffff';
+            e.currentTarget.style.color = '#4ade80';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = '#4ade80';
+            e.currentTarget.style.color = 'black';
+          }}
+        >
+          Analysis Tools
+        </button>
       </div>
 
       {/* Chart area */}
@@ -334,7 +379,7 @@ const [showChannelManager, setShowChannelManager] = useState(false);
               overflowX: 'hidden',
               minHeight: 0
             }}>
-              <ChannelManager />
+              <ChannelManager key={graphUpdateTrigger} />
             </div>
           </div>
         </div>

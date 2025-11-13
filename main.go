@@ -2,6 +2,7 @@ package main
 
 import (
 	Backend "MizzouDataTool/backend"
+	_ "MizzouDataTool/backend/tools" // Import tools to register them
 
 	"embed"
 
@@ -19,6 +20,7 @@ func main() {
 	logFileParser := Backend.CreateNewTelemetryFile()
 	storedFileManager := Backend.New_BTF(logFileParser)
 	tuneGraph := Backend.New_full_graph(storedFileManager)
+	toolManager := Backend.New_tool_manager(tuneGraph)
 
 	err := wails.Run(&options.App{
 		Title:             "MizzouDataTool",
@@ -35,6 +37,7 @@ func main() {
 			logFileParser,
 			storedFileManager,
 			tuneGraph,
+			toolManager,
 		},
 	})
 

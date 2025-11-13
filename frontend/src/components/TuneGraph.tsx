@@ -1,8 +1,29 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as d3 from 'd3';
-import { GetGraphMetadata, GetViewportData, SetCursorPosition, GetCursorData } from '../../wailsjs/go/Backend/Full_graph';
+import { GetGraphMetadata, GetViewportData, SetCursorPosition, GetCursorData, AddExportMarker, RemoveExportMarker } from '../../wailsjs/go/Backend/Full_graph';
 import { Backend } from '../../wailsjs/go/models';
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime';
+
+// Throttle utility function - limits function execution to once per wait period
+function throttle<T extends (...args: any[]) => any>(func: T, wait: number): (...args: Parameters<T>) => void {
+  let timeout: NodeJS.Timeout | null = null;
+  let lastRan: number = 0;
+
+  return function(...args: Parameters<T>) {
+    const now = Date.now();
+
+    if (now - lastRan >= wait) {
+      func(...args);
+      lastRan = now;
+    } else {
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        func(...args);
+        lastRan = Date.now();
+      }, wait - (now - lastRan));
+    }
+  };
+}
 
 interface TuneGraphProps {
   width?: number;
@@ -25,9 +46,80 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
   const [cursorTime, setCursorTime] = useState<number | null>(null);
   const [cursorData, setCursorData] = useState<{[key: string]: number} | null>(null);
 
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{x: number, y: number, time: number} | null>(null);
+
+  // Drag state for cursor movement
+  const [isDragging, setIsDragging] = useState(false);
+
   // Responsive dimensions - simplified approach following D3 patterns
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [forceRender, setForceRender] = useState(0);
+
+  // Context menu handlers
+  const handleAddExportStart = useCallback(async (time: number) => {
+    try {
+      await AddExportMarker(time, true);
+      setContextMenu(null);
+      // Reload viewport data to show the new marker
+      const req: Backend.Viewport_request = {
+        startTime: viewportStart,
+        endTime: viewportEnd
+      };
+      const data = await GetViewportData(req);
+      setViewportData(data);
+    } catch (err) {
+      console.error('Error adding export start marker:', err);
+    }
+  }, [viewportStart, viewportEnd]);
+
+  const handleAddExportEnd = useCallback(async (time: number) => {
+    try {
+      await AddExportMarker(time, false);
+      setContextMenu(null);
+      // Reload viewport data to show the new marker
+      const req: Backend.Viewport_request = {
+        startTime: viewportStart,
+        endTime: viewportEnd
+      };
+      const data = await GetViewportData(req);
+      setViewportData(data);
+    } catch (err) {
+      console.error('Error adding export end marker:', err);
+    }
+  }, [viewportStart, viewportEnd]);
+
+  const handleRemoveExportStart = useCallback(async (time: number) => {
+    try {
+      await RemoveExportMarker(time, true);
+      setContextMenu(null);
+      // Reload viewport data to update
+      const req: Backend.Viewport_request = {
+        startTime: viewportStart,
+        endTime: viewportEnd
+      };
+      const data = await GetViewportData(req);
+      setViewportData(data);
+    } catch (err) {
+      console.error('Error removing export start marker:', err);
+    }
+  }, [viewportStart, viewportEnd]);
+
+  const handleRemoveExportEnd = useCallback(async (time: number) => {
+    try {
+      await RemoveExportMarker(time, false);
+      setContextMenu(null);
+      // Reload viewport data to update
+      const req: Backend.Viewport_request = {
+        startTime: viewportStart,
+        endTime: viewportEnd
+      };
+      const data = await GetViewportData(req);
+      setViewportData(data);
+    } catch (err) {
+      console.error('Error removing export end marker:', err);
+    }
+  }, [viewportStart, viewportEnd]);
 
   // Get dimensions and force re-render when container size changes
   useEffect(() => {
@@ -44,6 +136,11 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
 
     // Initial sizing
     updateDimensions();
+
+    // Force a second update after a brief delay to ensure DOM is fully rendered
+    const timeoutId = setTimeout(() => {
+      updateDimensions();
+    }, 100);
 
     // Listen for window resize
     const handleResize = () => {
@@ -62,6 +159,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
     }
 
     return () => {
+      clearTimeout(timeoutId);
       window.removeEventListener('resize', handleResize);
       resizeObserver.disconnect();
     };
@@ -113,15 +211,13 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
     loadMetadata();
   }, []);
 
-  // Load viewport data when viewport changes
-  useEffect(() => {
-    if (!metadata || viewportStart === 0 || viewportEnd === 0) return;
-
-    const loadViewportData = async () => {
+  // Throttled viewport data loader (75ms throttle for smooth zooming)
+  const throttledLoadViewportData = useRef(
+    throttle(async (startTime: number, endTime: number) => {
       try {
         const request: Backend.Viewport_request = {
-          startTime: viewportStart,
-          endTime: viewportEnd,
+          startTime,
+          endTime,
         };
 
         const data = await GetViewportData(request);
@@ -130,29 +226,37 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
         console.error('Error loading viewport data:', err);
         setError(`Failed to load viewport data: ${err}`);
       }
-    };
+    }, 75) // 75ms throttle for smooth zoom
+  ).current;
 
-    loadViewportData();
-  }, [viewportStart, viewportEnd, metadata]);
-
-  // Load cursor data when cursor position changes
+  // Load viewport data when viewport changes (throttled)
   useEffect(() => {
-    if (cursorTime === null) {
-      setCursorData(null);
-      return;
-    }
+    if (!metadata || viewportStart === 0 || viewportEnd === 0) return;
 
-    const loadCursorData = async () => {
+    throttledLoadViewportData(viewportStart, viewportEnd);
+  }, [viewportStart, viewportEnd, metadata, throttledLoadViewportData]);
+
+  // Throttled cursor data loader (40ms throttle for smooth dragging)
+  const throttledLoadCursorData = useRef(
+    throttle(async () => {
       try {
         const data = await GetCursorData();
         setCursorData(data);
       } catch (err) {
         console.error('Error loading cursor data:', err);
       }
-    };
+    }, 40) // 40ms = ~25 updates/second
+  ).current;
 
-    loadCursorData();
-  }, [cursorTime]);
+  // Load cursor data when cursor position changes (throttled)
+  useEffect(() => {
+    if (cursorTime === null) {
+      setCursorData(null);
+      return;
+    }
+
+    throttledLoadCursorData();
+  }, [cursorTime, throttledLoadCursorData]);
 
   // Listen for graph refresh events from ChannelManager window
   useEffect(() => {
@@ -391,6 +495,40 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
         .attr('pointer-events', 'none');
     }
 
+    // Draw export start markers (blue vertical lines)
+    if (viewportData.exportStarts && viewportData.exportStarts.length > 0) {
+      viewportData.exportStarts.forEach(idx => {
+        const time = viewportData.timestamps[idx];
+        const x = margin.left + xScale(time);
+        svg.append('line')
+          .attr('x1', x)
+          .attr('x2', x)
+          .attr('y1', margin.top)
+          .attr('y2', height - margin.bottom)
+          .attr('stroke', '#0099FF')
+          .attr('stroke-width', cursorStrokeWidth)
+          .attr('opacity', 0.7)
+          .attr('pointer-events', 'none');
+      });
+    }
+
+    // Draw export end markers (yellow vertical lines)
+    if (viewportData.exportEnds && viewportData.exportEnds.length > 0) {
+      viewportData.exportEnds.forEach(idx => {
+        const time = viewportData.timestamps[idx];
+        const x = margin.left + xScale(time);
+        svg.append('line')
+          .attr('x1', x)
+          .attr('x2', x)
+          .attr('y1', margin.top)
+          .attr('y2', height - margin.bottom)
+          .attr('stroke', '#FFD700')
+          .attr('stroke-width', cursorStrokeWidth)
+          .attr('opacity', 0.7)
+          .attr('pointer-events', 'none');
+      });
+    }
+
     // X axis (at bottom)
     svg.append('g')
       .attr('transform', `translate(${margin.left}, ${height - margin.bottom})`)
@@ -457,18 +595,43 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       ? cursorTime
       : (viewportStart + viewportEnd) / 2;
 
+    // Calculate the pivot's relative position in current viewport (0 to 1)
+    const currentRange = viewportEnd - viewportStart;
+    const pivotRatio = (pivot - viewportStart) / currentRange;
+
     // Scale distances from pivot
     let newStart = pivot - (pivot - viewportStart) * zoomFactor;
     let newEnd = pivot + (viewportEnd - pivot) * zoomFactor;
 
-    // Clamp to total dataset range
-    if (newStart < metadata.timeRange[0]) newStart = metadata.timeRange[0];
-    if (newEnd > metadata.timeRange[1]) newEnd = metadata.timeRange[1];
+    // Clamp to total dataset range while trying to maintain pivot position
+    const minTime = metadata.timeRange[0];
+    const maxTime = metadata.timeRange[1];
+
+    if (newStart < minTime) {
+      // Hit left boundary - adjust to keep pivot ratio if possible
+      newStart = minTime;
+      const desiredRange = (newEnd - newStart);
+      if (pivot - newStart < desiredRange * pivotRatio) {
+        // Can't maintain exact pivot ratio, adjust end
+        newEnd = Math.min(maxTime, newStart + desiredRange);
+      }
+    }
+
+    if (newEnd > maxTime) {
+      // Hit right boundary - adjust to keep pivot ratio if possible
+      newEnd = maxTime;
+      const desiredRange = (newEnd - newStart);
+      if (newEnd - pivot < desiredRange * (1 - pivotRatio)) {
+        // Can't maintain exact pivot ratio, adjust start
+        newStart = Math.max(minTime, newEnd - desiredRange);
+      }
+    }
+
     if (newEnd <= newStart) {
-      // ensure at least 1 unit range
+      // Ensure at least 1 unit range, centered on pivot
       const eps = 1;
-      newStart = Math.max(metadata.timeRange[0], pivot - eps / 2);
-      newEnd = Math.min(metadata.timeRange[1], pivot + eps / 2);
+      newStart = Math.max(minTime, pivot - eps / 2);
+      newEnd = Math.min(maxTime, pivot + eps / 2);
     }
 
     setViewportStart(newStart);
@@ -487,16 +650,90 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
     };
   }, [handleWheel]);
 
-  // Left-click to set cursor (snap to nearest visible timestamp)
+  // Helper function to snap and set cursor position
+  const snapAndSetCursor = useCallback((clientX: number) => {
+    if (!containerRef.current || !viewportData) return;
+
+    const rect = containerRef.current.getBoundingClientRect();
+    const xWithin = clientX - rect.left - margin.left;
+    if (xWithin < 0 || xWithin > chartWidth) return;
+
+    const xScale = d3.scaleLinear()
+      .domain([viewportData.viewportStart, viewportData.viewportEnd])
+      .range([0, chartWidth]);
+    const t = xScale.invert(xWithin);
+
+    // snap to nearest timestamp in current viewport
+    const ts = viewportData.timestamps;
+    if (!ts || ts.length === 0) return;
+    // binary search for nearest
+    let left = 0, right = ts.length - 1;
+    while (left < right) {
+      const mid = Math.floor((left + right) / 2);
+      if (ts[mid] === t) { left = mid; break; }
+      if (ts[mid] < t) left = mid + 1; else right = mid;
+    }
+    let idx = left;
+    if (idx > 0 && Math.abs(Number(t) - Number(ts[idx - 1])) < Math.abs(Number(ts[idx]) - Number(t))) {
+      idx = idx - 1;
+    }
+    const snapped = Number(ts[idx]);
+    setCursorTime(snapped);
+    // inform backend (will snap to full-res internally)
+    try { SetCursorPosition(snapped); } catch {}
+  }, [viewportData, margin.left, chartWidth]);
+
+  // Left-click and drag to set/move cursor
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !viewportData) return;
 
     const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 0) return; // left-click only
-      // compute x relative to chart area
+
+      // Don't move cursor if context menu is open
+      if (contextMenu !== null) return;
+
       const rect = container.getBoundingClientRect();
       const xWithin = e.clientX - rect.left - margin.left;
+      if (xWithin < 0 || xWithin > chartWidth) return;
+
+      setIsDragging(true);
+      snapAndSetCursor(e.clientX);
+    };
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isDragging) return;
+      snapAndSetCursor(e.clientX);
+    };
+
+    const onMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    container.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+
+    return () => {
+      container.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [viewportData, margin.left, chartWidth, contextMenu, isDragging, snapAndSetCursor]);
+
+  // Right-click to open context menu for export markers
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !viewportData) return;
+
+    const onContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+
+      const rect = container.getBoundingClientRect();
+      const xWithin = e.clientX - rect.left - margin.left;
+
+      // Only show menu if click is within chart area
       if (xWithin < 0 || xWithin > chartWidth) return;
 
       const xScale = d3.scaleLinear()
@@ -504,10 +741,10 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
         .range([0, chartWidth]);
       const t = xScale.invert(xWithin);
 
-      // snap to nearest timestamp in current viewport
+      // Snap to nearest timestamp
       const ts = viewportData.timestamps;
       if (!ts || ts.length === 0) return;
-      // binary search for nearest
+
       let left = 0, right = ts.length - 1;
       while (left < right) {
         const mid = Math.floor((left + right) / 2);
@@ -519,14 +756,29 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
         idx = idx - 1;
       }
       const snapped = Number(ts[idx]);
-      setCursorTime(snapped);
-      // inform backend (will snap to full-res internally)
-      try { SetCursorPosition(snapped); } catch {}
+
+      setContextMenu({
+        x: e.clientX,
+        y: e.clientY,
+        time: snapped
+      });
     };
 
-    container.addEventListener('mousedown', onMouseDown);
-    return () => container.removeEventListener('mousedown', onMouseDown);
+    container.addEventListener('contextmenu', onContextMenu);
+    return () => container.removeEventListener('contextmenu', onContextMenu);
   }, [viewportData, margin.left, chartWidth]);
+
+  // Close context menu on click outside
+  useEffect(() => {
+    if (!contextMenu) return;
+
+    const closeMenu = () => setContextMenu(null);
+    window.addEventListener('click', closeMenu);
+
+    return () => {
+      window.removeEventListener('click', closeMenu);
+    };
+  }, [contextMenu]);
 
   // Keyboard navigation (left/right arrows to move cursor)
   useEffect(() => {
@@ -642,13 +894,159 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
           border: `1px solid #F1B82D`
         }}>
           <div>LOD Step: {viewportData.lodStep},
-          Points: {viewportData.totalPoints},
+          Points: {(() => {
+            const totalChannels = viewportData.graphs.reduce((sum, graph) => sum + graph.channels.length, 0);
+            return viewportData.totalPoints * totalChannels;
+          })()},
           Selected time: {cursorTime !== null ? cursorTime.toFixed(2) : 'None'}</div>
+        </div>
+      )}
+
+      {/* Context menu for export markers */}
+      {contextMenu && viewportData && (
+        <div
+          style={{
+            position: 'fixed',
+            left: contextMenu.x,
+            top: contextMenu.y,
+            backgroundColor: '#1a1a1a',
+            border: '2px solid #F1B82D',
+            borderRadius: '6px',
+            padding: '8px',
+            zIndex: 10000,
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.5)',
+            minWidth: '200px'
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{
+            color: '#F1B82D',
+            fontSize: '12px',
+            fontWeight: 'bold',
+            marginBottom: '8px',
+            paddingBottom: '6px',
+            borderBottom: '1px solid #F1B82D'
+          }}>
+            Export Markers
+          </div>
+
+          <button
+            onClick={() => handleAddExportStart(contextMenu.time)}
+            style={{
+              display: 'block',
+              width: '100%',
+              padding: '8px 12px',
+              marginBottom: '4px',
+              backgroundColor: '#0099FF',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '12px',
+              fontWeight: 'bold',
+              textAlign: 'left'
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#0077CC'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#0099FF'}
+          >
+            + Add Start Line (Blue)
+          </button>
+
+          <button
+            onClick={() => handleAddExportEnd(contextMenu.time)}
+            style={{
+              display: 'block',
+              width: '100%',
+              padding: '8px 12px',
+              marginBottom: '8px',
+              backgroundColor: '#FFD700',
+              color: 'black',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '12px',
+              fontWeight: 'bold',
+              textAlign: 'left'
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#FFC700'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#FFD700'}
+          >
+             + Add End Line (Yellow)
+          </button>
+
+          {viewportData.exportStarts && viewportData.exportStarts.length > 0 && (
+            <button
+              onClick={() => handleRemoveExportStart(contextMenu.time)}
+              style={{
+                display: 'block',
+                width: '100%',
+                padding: '8px 12px',
+                marginBottom: '4px',
+                backgroundColor: '#333',
+                color: '#0099FF',
+                border: '1px solid #0099FF',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '12px',
+                fontWeight: 'bold',
+                textAlign: 'left'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#0099FF';
+                e.currentTarget.style.color = 'white';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = '#333';
+                e.currentTarget.style.color = '#0099FF';
+              }}
+            >
+              - Remove Closest Start
+            </button>
+          )}
+
+          {viewportData.exportEnds && viewportData.exportEnds.length > 0 && (
+            <button
+              onClick={() => handleRemoveExportEnd(contextMenu.time)}
+              style={{
+                display: 'block',
+                width: '100%',
+                padding: '8px 12px',
+                backgroundColor: '#333',
+                color: '#FFD700',
+                border: '1px solid #FFD700',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '12px',
+                fontWeight: 'bold',
+                textAlign: 'left'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#FFD700';
+                e.currentTarget.style.color = 'black';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = '#333';
+                e.currentTarget.style.color = '#FFD700';
+              }}
+            >
+              - Remove Closest End
+            </button>
+          )}
+
+          <div style={{
+            color: '#999',
+            fontSize: '10px',
+            marginTop: '8px',
+            paddingTop: '6px',
+            borderTop: '1px solid #333',
+            textAlign: 'center'
+          }}>
+            Time: {contextMenu.time.toFixed(3)} ms
+          </div>
         </div>
       )}
     </div>
   );
 };
-
 
 export default TuneGraph;
