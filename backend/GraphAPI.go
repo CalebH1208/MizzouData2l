@@ -950,6 +950,7 @@ func (fg *Full_graph) ConfigureGraphsFromLayout(configs []Graph_configuration) e
 
 // ExtractRawDataBetweenTimes creates a Data_fragment with all channels' data
 // between the specified start and end times (using full resolution LOD=1)
+// Optimized with shared index calculation and parallel channel extraction
 func (fg *Full_graph) ExtractRawDataBetweenTimes(startTime, endTime float64) (*Data_fragment, error) {
 	fg.mutex.RLock()
 	defer fg.mutex.RUnlock()
@@ -962,7 +963,7 @@ func (fg *Full_graph) ExtractRawDataBetweenTimes(startTime, endTime float64) (*D
 		return nil, fmt.Errorf("start time must be less than end time")
 	}
 
-	// Find indices in full timestamps
+	// Find indices in full timestamps ONCE (shared across all channels)
 	startIdx := fg.findTimeIndex(fg.FullTimeStamps, startTime)
 	endIdx := fg.findTimeIndex(fg.FullTimeStamps, endTime)
 
@@ -978,35 +979,65 @@ func (fg *Full_graph) ExtractRawDataBetweenTimes(startTime, endTime float64) (*D
 	fragment.TimeStamps = make([]float64, endIdx-startIdx)
 	copy(fragment.TimeStamps, fg.FullTimeStamps[startIdx:endIdx])
 
-	// Extract all channels using full resolution (LOD step = 1)
+	// For LOD=1, timestamps match FullTimeStamps exactly, so indices are the same
+	// All channels share the same start/end indices - no need for per-channel binary search
+	lodStartIdx := startIdx
+	lodEndIdx := endIdx
+
+	// Extract all channels in parallel for performance
+	var wg sync.WaitGroup
+	channelMutex := sync.Mutex{}
+	errChan := make(chan error, len(fg.ViewableChannels))
+
 	for channelName, channel := range fg.ViewableChannels {
-		lodData, exists := channel.DataLines[1]
-		if !exists {
-			return nil, fmt.Errorf("channel '%s' does not have full resolution data", channelName)
-		}
+		wg.Add(1)
+		go func(chName string, ch *Data_channel) {
+			defer wg.Done()
 
-		// Find corresponding indices in LOD data (should match since step=1)
-		lodStartIdx := fg.findTimeIndex(lodData.Timestamps, startTime)
-		lodEndIdx := fg.findTimeIndex(lodData.Timestamps, endTime)
+			lodData, exists := ch.DataLines[1]
+			if !exists {
+				errChan <- fmt.Errorf("channel '%s' does not have full resolution data", chName)
+				return
+			}
 
-		if lodEndIdx <= lodStartIdx {
-			lodEndIdx = lodStartIdx + 1
-		}
-		if lodEndIdx > len(lodData.Values) {
-			lodEndIdx = len(lodData.Values)
-		}
+			// Validate indices are within bounds
+			if lodEndIdx > len(lodData.Values) {
+				errChan <- fmt.Errorf("channel '%s' data index out of bounds", chName)
+				return
+			}
 
-		// Create fragment channel
-		fragmentChannel := &Fragment_channel{
-			Name:   channelName,
-			Unit:   channel.Unit,
-			Values: make([]float64, lodEndIdx-lodStartIdx),
-		}
-		copy(fragmentChannel.Values, lodData.Values[lodStartIdx:lodEndIdx])
+			// Create fragment channel with data slice
+			fragmentChannel := &Fragment_channel{
+				Name:   chName,
+				Unit:   ch.Unit,
+				Values: make([]float64, lodEndIdx-lodStartIdx),
+			}
+			copy(fragmentChannel.Values, lodData.Values[lodStartIdx:lodEndIdx])
 
-		fragment.Channels[channelName] = fragmentChannel
+			// Thread-safe write to fragment channels map
+			channelMutex.Lock()
+			fragment.Channels[chName] = fragmentChannel
+			channelMutex.Unlock()
+		}(channelName, channel)
 	}
-	//fmt.Printf("fragment: %v\n", fragment)
+
+	wg.Wait()
+	close(errChan)
+
+	// Check for errors
+	if err := <-errChan; err != nil {
+		return nil, err
+	}
+
+	// Add Time as a channel for tool usage (e.g., plotting data vs time)
+	timeChannel := &Fragment_channel{
+		Name:   "Time",
+		Unit:   "s",
+		Values: make([]float64, len(fragment.TimeStamps)),
+	}
+	copy(timeChannel.Values, fragment.TimeStamps)
+	fragment.Channels["Time"] = timeChannel
+
 	return fragment, nil
 }
 
@@ -1299,4 +1330,135 @@ func generateVibrantColor(channelName string) string {
 	bInt := int((b + m) * 255)
 
 	return fmt.Sprintf("#%02X%02X%02X", rInt, gInt, bInt)
+}
+
+// LoadPreviewChannel loads a single channel from Telemetry_file for preview during validation
+// This allows the validation UI to use TuneGraph before data is saved to Full_graph
+func (fg *Full_graph) LoadPreviewChannel(telemetryFile *Telemetry_file, channelName string) error {
+	fg.mutex.Lock()
+	defer fg.mutex.Unlock()
+
+	// Clear existing graph state
+	fg.Graphs = make([]Solo_graph, 0)
+	fg.BreakLines = make([]float64, 0)
+	fg.ExportStartLines = make([]float64, 0)
+	fg.ExportEndLines = make([]float64, 0)
+	fg.CursorPos = 0
+	fg.ViewableChannels = make(map[string]*Data_channel)
+
+	// Find Time and target channel
+	var timeChannel *Telemetry_channel
+	var targetChannel *Telemetry_channel
+
+	for i := range telemetryFile.Channels {
+		if telemetryFile.Channels[i].Name == "Time" {
+			timeChannel = &telemetryFile.Channels[i]
+		}
+		if telemetryFile.Channels[i].Name == channelName {
+			targetChannel = &telemetryFile.Channels[i]
+		}
+	}
+
+	if timeChannel == nil {
+		return fmt.Errorf("Time channel not found in telemetry file")
+	}
+	if targetChannel == nil {
+		return fmt.Errorf("channel %s not found in telemetry file", channelName)
+	}
+
+	dataLength := len(timeChannel.Data)
+	if dataLength == 0 {
+		return fmt.Errorf("no data in channels")
+	}
+
+	// Load timestamps
+	fg.FullTimeStamps = make([]float64, dataLength)
+	for i, v := range timeChannel.Data {
+		fg.FullTimeStamps[i] = float64(v)
+	}
+
+	// Calculate max LOD step for single channel
+	maxLODStep := fg.calculateMaxLODStep(dataLength, 1)
+
+	fmt.Printf("[Preview] Loading channel %s with %d points, max LOD: %d\n",
+		channelName, dataLength, maxLODStep)
+
+	// Create single data channel with LOD
+	dataChannel := &Data_channel{
+		Name:       targetChannel.Name,
+		Unit:       targetChannel.Unit,
+		Color:      "#F1B82D",
+		GraphIndex: 0,
+		DataLines:  make(map[int]*LOD_data_line),
+	}
+
+	// Generate LOD levels
+	lodStep := 1
+	for lodStep <= maxLODStep {
+		lodLine := &LOD_data_line{
+			Step:       lodStep,
+			Timestamps: []float64{},
+			IndexMap:   []int64{},
+			Values:     []float64{},
+		}
+
+		for i := 0; i < dataLength; i += lodStep {
+			lodLine.Timestamps = append(lodLine.Timestamps, fg.FullTimeStamps[i])
+			lodLine.IndexMap = append(lodLine.IndexMap, int64(i))
+			lodLine.Values = append(lodLine.Values, float64(targetChannel.Data[i]))
+		}
+
+		dataChannel.DataLines[lodStep] = lodLine
+		fmt.Printf("[Preview] Generated LOD level %d: %d points\n", lodStep, len(lodLine.Values))
+
+		if lodStep == 1 {
+			lodStep = 2
+		} else {
+			lodStep *= 2
+		}
+	}
+
+	fg.ViewableChannels[channelName] = dataChannel
+
+	// Calculate Y range for the channel
+	yMin := dataChannel.DataLines[1].Values[0]
+	yMax := yMin
+	for _, val := range dataChannel.DataLines[1].Values {
+		if val < yMin {
+			yMin = val
+		}
+		if val > yMax {
+			yMax = val
+		}
+	}
+
+	padding := (yMax - yMin) * 0.1
+	if padding == 0 {
+		padding = 1 // Avoid zero range
+	}
+
+	// Create a single graph with this channel
+	fg.Graphs = []Solo_graph{{
+		Index:        0,
+		Title:        fmt.Sprintf("Preview: %s", channelName),
+		YRange:       [2]float64{yMin - padding, yMax + padding},
+		DataChannels: []string{channelName},
+		UseSplitAxis: false,
+	}}
+
+	fmt.Printf("[Preview] Successfully loaded channel %s for preview\n", channelName)
+	return nil
+}
+
+// PreviewValidationChannel is a frontend-accessible wrapper for LoadPreviewChannel
+// It loads a channel from the validation data (Telemetry_file) for preview in the DataEntryPage
+func (fg *Full_graph) PreviewValidationChannel(channelName string) error {
+	if fg.stored_file_manager == nil {
+		return fmt.Errorf("stored file manager not initialized")
+	}
+	if fg.stored_file_manager.parser == nil {
+		return fmt.Errorf("telemetry file parser not available")
+	}
+
+	return fg.LoadPreviewChannel(fg.stored_file_manager.parser, channelName)
 }

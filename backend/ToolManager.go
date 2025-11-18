@@ -57,6 +57,7 @@ func (tm *Tool_manager) ExtractDataFragment(startTime, endTime float64) (string,
 
 // ExtractFragmentsFromMarkers creates fragments from paired export markers
 // Implements the logic: "start always starts, end always stops"
+// Optimized with parallel fragment extraction for performance
 func (tm *Tool_manager) ExtractFragmentsFromMarkers() ([]string, error) {
 	if tm.fullGraph == nil {
 		return nil, fmt.Errorf("full graph not initialized")
@@ -76,21 +77,51 @@ func (tm *Tool_manager) ExtractFragmentsFromMarkers() ([]string, error) {
 
 	fmt.Printf("[ExtractFragmentsFromMarkers] Received %d pairs from GetExportMarkerPairs\n", len(pairs))
 
-	// Extract a fragment for each pair
-	fragmentIDs := make([]string, 0, len(pairs))
+	// Extract fragments in parallel for performance
+	fragmentIDs := make([]string, len(pairs))
+	errChan := make(chan error, len(pairs))
+	var wg sync.WaitGroup
+
 	for i, pair := range pairs {
-		fmt.Printf("[ExtractFragmentsFromMarkers] Extracting fragment %d/%d: [%.6f, %.6f]\n", i+1, len(pairs), pair[0], pair[1])
-		id, err := tm.ExtractDataFragment(pair[0], pair[1])
-		if err != nil {
-			fmt.Printf("[ExtractFragmentsFromMarkers] ERROR extracting fragment %d: %v\n", i+1, err)
-			return nil, fmt.Errorf("failed to extract fragment for markers %.2f-%.2f: %v", pair[0], pair[1], err)
-		}
-		fmt.Printf("[ExtractFragmentsFromMarkers] Successfully extracted fragment %d with ID: %s\n", i+1, id)
-		fragmentIDs = append(fragmentIDs, id)
+		wg.Add(1)
+		go func(index int, p [2]float64) {
+			defer wg.Done()
+			fmt.Printf("[ExtractFragmentsFromMarkers] Extracting fragment %d/%d: [%.6f, %.6f]\n", index+1, len(pairs), p[0], p[1])
+
+			id, err := tm.ExtractDataFragment(p[0], p[1])
+			if err != nil {
+				fmt.Printf("[ExtractFragmentsFromMarkers] ERROR extracting fragment %d: %v\n", index+1, err)
+				errChan <- fmt.Errorf("failed to extract fragment for markers %.2f-%.2f: %v", p[0], p[1], err)
+				return
+			}
+
+			fmt.Printf("[ExtractFragmentsFromMarkers] Successfully extracted fragment %d with ID: %s\n", index+1, id)
+			fragmentIDs[index] = id
+		}(i, pair)
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	// Check for errors
+	if err := <-errChan; err != nil {
+		return nil, err
 	}
 
 	fmt.Printf("[ExtractFragmentsFromMarkers] Extraction complete. Total fragments: %d\n", len(fragmentIDs))
 	fmt.Printf("[ExtractFragmentsFromMarkers] Current fragment count in storage: %d\n", len(tm.fragments))
+
+	// Automatically create concatenated fragment if more than one fragment exists
+	if len(fragmentIDs) > 1 {
+		fmt.Println("[ExtractFragmentsFromMarkers] Auto-creating concatenated fragment...")
+		concatenatedID, err := tm.ConcatenateAllFragments()
+		if err != nil {
+			fmt.Printf("[ExtractFragmentsFromMarkers] WARNING: Failed to create concatenated fragment: %v\n", err)
+			// Don't fail the whole operation, just log the warning
+		} else {
+			fmt.Printf("[ExtractFragmentsFromMarkers] Pre-created concatenated fragment with ID: %s\n", concatenatedID)
+		}
+	}
 
 	return fragmentIDs, nil
 }
@@ -193,6 +224,18 @@ func (tm *Tool_manager) HasConcatenatedFragment() bool {
 	return exists
 }
 
+// GetConcatenatedFragmentID returns the ID of the concatenated fragment if it exists
+// Returns empty string if no concatenated fragment exists
+func (tm *Tool_manager) GetConcatenatedFragmentID() string {
+	tm.mutex.RLock()
+	defer tm.mutex.RUnlock()
+
+	if _, exists := tm.fragments["concatenated_all"]; exists {
+		return "concatenated_all"
+	}
+	return ""
+}
+
 // DeleteConcatenatedFragment removes the concatenated fragment if it exists
 func (tm *Tool_manager) DeleteConcatenatedFragment() error {
 	tm.mutex.Lock()
@@ -206,7 +249,43 @@ func (tm *Tool_manager) DeleteConcatenatedFragment() error {
 	return nil
 }
 
+// Fragment_metadata provides lightweight fragment information without data
+type Fragment_metadata struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	StartTime    float64  `json:"startTime"`
+	EndTime      float64  `json:"endTime"`
+	PointCount   int      `json:"pointCount"`
+	Duration     float64  `json:"duration"`
+	ChannelNames []string `json:"channelNames"` // List of channel names (for UI dropdowns)
+}
+
+// GetSourceFragmentsMetadata returns metadata for all fragments except the concatenated one
+// This is much faster than GetSourceFragments as it doesn't transfer channel data
+func (tm *Tool_manager) GetSourceFragmentsMetadata() []Fragment_metadata {
+	tm.mutex.RLock()
+	defer tm.mutex.RUnlock()
+
+	metadata := make([]Fragment_metadata, 0, len(tm.fragments))
+	for id, fragment := range tm.fragments {
+		if id != "concatenated_all" {
+			metadata = append(metadata, Fragment_metadata{
+				ID:           fragment.ID,
+				Name:         fragment.Name,
+				StartTime:    fragment.StartTime,
+				EndTime:      fragment.EndTime,
+				PointCount:   fragment.GetPointCount(),
+				Duration:     fragment.GetDuration(),
+				ChannelNames: fragment.GetChannelNames(),
+			})
+		}
+	}
+	fmt.Printf("[GetSourceFragmentsMetadata] Returning metadata for %d source fragments (total in storage: %d)\n", len(metadata), len(tm.fragments))
+	return metadata
+}
+
 // GetSourceFragments returns all fragments except the concatenated one
+// DEPRECATED: Use GetSourceFragmentsMetadata instead for better performance
 func (tm *Tool_manager) GetSourceFragments() []*Data_fragment {
 	tm.mutex.RLock()
 	defer tm.mutex.RUnlock()
@@ -292,25 +371,38 @@ func (tm *Tool_manager) ConcatenateAllFragments() (string, error) {
 		concatenated.Channels[name] = &Fragment_channel{
 			Name:   name,
 			Unit:   firstFragment.Channels[name].Unit,
-			Values: make([]float64, 0, totalPoints),
+			Values: nil, // Will be set by parallel concatenation
 		}
 	}
 
-	// Concatenate data from all fragments
+	// Concatenate timestamps (must be done serially to maintain order)
 	for _, sf := range sortedFrags {
-		// Append timestamps
 		concatenated.TimeStamps = append(concatenated.TimeStamps, sf.fragment.TimeStamps...)
-
-		// Append channel values
-		for _, channelName := range channelNames {
-			if channel, exists := sf.fragment.Channels[channelName]; exists {
-				concatenated.Channels[channelName].Values = append(
-					concatenated.Channels[channelName].Values,
-					channel.Values...,
-				)
-			}
-		}
 	}
+
+	// Concatenate channel values in parallel for performance
+	var wg sync.WaitGroup
+	for _, channelName := range channelNames {
+		wg.Add(1)
+		go func(chName string) {
+			defer wg.Done()
+
+			// Allocate the full slice once with known capacity
+			channelValues := make([]float64, 0, totalPoints)
+
+			// Concatenate values from all fragments in order
+			for _, sf := range sortedFrags {
+				if channel, exists := sf.fragment.Channels[chName]; exists {
+					channelValues = append(channelValues, channel.Values...)
+				}
+			}
+
+			// Assign the concatenated values
+			concatenated.Channels[chName].Values = channelValues
+		}(channelName)
+	}
+
+	wg.Wait()
 
 	// Set StartTime and EndTime based on actual first and last timestamps
 	// (not the gap-inclusive range, since this is non-contiguous data)

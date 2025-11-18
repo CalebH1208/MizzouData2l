@@ -72,6 +72,16 @@ func (df *Data_fragment) GetChannelNames() []string {
 	return names
 }
 
+// GetChannelNamesOnly returns just the channel names without any data
+// This is useful for UI that needs to know available channels
+func (df *Data_fragment) GetChannelNamesOnly() map[string]string {
+	result := make(map[string]string)
+	for name, channel := range df.Channels {
+		result[name] = channel.Unit
+	}
+	return result
+}
+
 // GetChannel retrieves a specific channel by name, or nil if not found
 func (df *Data_fragment) GetChannel(name string) *Fragment_channel {
 	return df.Channels[name]

@@ -28,6 +28,7 @@ func (t *XYScatterTool) GetDescription() string {
 // Expected params:
 //   - "xChannel" (string): Name of the channel to use for X-axis
 //   - "yChannel" (string): Name of the channel to use for Y-axis
+//   - "colorChannel" (string, optional): Name of the channel to use for color mapping
 func (t *XYScatterTool) Execute(fragment *Backend.Data_fragment, params map[string]interface{}) (*Backend.Tool_result, error) {
 	// Extract parameters
 	xChannelName, ok := params["xChannel"].(string)
@@ -39,6 +40,9 @@ func (t *XYScatterTool) Execute(fragment *Backend.Data_fragment, params map[stri
 	if !ok || yChannelName == "" {
 		return nil, fmt.Errorf("parameter 'yChannel' is required and must be a string")
 	}
+
+	// Optional color channel
+	colorChannelName, _ := params["colorChannel"].(string)
 
 	// Validate channels exist in fragment
 	xChannel := fragment.GetChannel(xChannelName)
@@ -61,36 +65,71 @@ func (t *XYScatterTool) Execute(fragment *Backend.Data_fragment, params map[stri
 		return nil, fmt.Errorf("no data points in channels")
 	}
 
-	// Generate scatter plot data
-	scatterPoints := make([]map[string]float64, len(xChannel.Values))
-	for i := 0; i < len(xChannel.Values); i++ {
-		scatterPoints[i] = map[string]float64{
+	// Handle optional color channel
+	var colorChannel *Backend.Fragment_channel
+	var colorMin, colorMax float64
+	hasColor := false
+
+	if colorChannelName != "" {
+		colorChannel = fragment.GetChannel(colorChannelName)
+		if colorChannel == nil {
+			return nil, fmt.Errorf("color channel '%s' not found in fragment", colorChannelName)
+		}
+
+		if len(colorChannel.Values) != len(xChannel.Values) {
+			return nil, fmt.Errorf("color channel has different length: %s (%d) vs %s (%d)",
+				colorChannelName, len(colorChannel.Values), xChannelName, len(xChannel.Values))
+		}
+
+		colorMin, colorMax = calculateMinMax(colorChannel.Values)
+		hasColor = true
+	}
+
+	// Generate scatter plot data (no downsampling - user wants full data fidelity)
+	totalPoints := len(xChannel.Values)
+	scatterPoints := make([]map[string]float64, totalPoints)
+	for i := 0; i < totalPoints; i++ {
+		point := map[string]float64{
 			"x": xChannel.Values[i],
 			"y": yChannel.Values[i],
 		}
+		if hasColor {
+			point["color"] = colorChannel.Values[i]
+		}
+		scatterPoints[i] = point
 	}
 
 	// Calculate basic statistics
 	xMin, xMax := calculateMinMax(xChannel.Values)
 	yMin, yMax := calculateMinMax(yChannel.Values)
 
+	// Create result metadata
+	metadata := map[string]interface{}{
+		"xChannel":   xChannelName,
+		"yChannel":   yChannelName,
+		"xUnit":      xChannel.Unit,
+		"yUnit":      yChannel.Unit,
+		"pointCount": len(scatterPoints),
+		"xRange":     []float64{xMin, xMax},
+		"yRange":     []float64{yMin, yMax},
+		"startTime":  fragment.StartTime,
+		"endTime":    fragment.EndTime,
+		"duration":   fragment.GetDuration(),
+		"hasColor":   hasColor,
+	}
+
+	if hasColor {
+		metadata["colorChannel"] = colorChannelName
+		metadata["colorUnit"] = colorChannel.Unit
+		metadata["colorRange"] = []float64{colorMin, colorMax}
+	}
+
 	// Create result
 	result := &Backend.Tool_result{
 		ToolName:   t.GetName(),
 		ResultType: "scatter",
 		Data:       scatterPoints,
-		Metadata: map[string]interface{}{
-			"xChannel":   xChannelName,
-			"yChannel":   yChannelName,
-			"xUnit":      xChannel.Unit,
-			"yUnit":      yChannel.Unit,
-			"pointCount": len(scatterPoints),
-			"xRange":     []float64{xMin, xMax},
-			"yRange":     []float64{yMin, yMax},
-			"startTime":  fragment.StartTime,
-			"endTime":    fragment.EndTime,
-			"duration":   fragment.GetDuration(),
-		},
+		Metadata:   metadata,
 	}
 
 	return result, nil

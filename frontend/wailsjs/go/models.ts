@@ -95,6 +95,30 @@ export namespace Backend {
 		}
 	}
 	
+	export class Fragment_metadata {
+	    id: string;
+	    name: string;
+	    startTime: number;
+	    endTime: number;
+	    pointCount: number;
+	    duration: number;
+	    channelNames: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Fragment_metadata(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.startTime = source["startTime"];
+	        this.endTime = source["endTime"];
+	        this.pointCount = source["pointCount"];
+	        this.duration = source["duration"];
+	        this.channelNames = source["channelNames"];
+	    }
+	}
 	export class Graph_configuration {
 	    title: string;
 	    channelNames: string[];
@@ -191,6 +215,62 @@ export namespace Backend {
 	        this.yRange = source["yRange"];
 	        this.useSplitAxis = source["useSplitAxis"];
 	        this.channels = this.convertValues(source["channels"], Channel_viewport);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class Telemetry_channel {
+	    Name: string;
+	    Unit: string;
+	    Conversion: number;
+	    OriginalConv: number;
+	    Data: number[];
+	    OriginalData: number[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Telemetry_channel(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Name = source["Name"];
+	        this.Unit = source["Unit"];
+	        this.Conversion = source["Conversion"];
+	        this.OriginalConv = source["OriginalConv"];
+	        this.Data = source["Data"];
+	        this.OriginalData = source["OriginalData"];
+	    }
+	}
+	export class Telemetry_file {
+	    name: string;
+	    tags: string[];
+	    channels: Telemetry_channel[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Telemetry_file(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.tags = source["tags"];
+	        this.channels = this.convertValues(source["channels"], Telemetry_channel);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

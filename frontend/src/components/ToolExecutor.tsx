@@ -35,6 +35,9 @@ const ToolExecutor: React.FC<ToolExecutorProps> = ({
 
   return (
     <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100%',
       maxWidth: '1400px',
       margin: '0 auto',
     }}>
@@ -44,6 +47,7 @@ const ToolExecutor: React.FC<ToolExecutorProps> = ({
         borderRadius: '6px',
         padding: '12px 16px',
         marginBottom: '16px',
+        flexShrink: 0,
       }}>
         <div style={{
           display: 'flex',
@@ -91,9 +95,13 @@ const ToolExecutor: React.FC<ToolExecutorProps> = ({
 
       {/* Tool UI */}
       <div style={{
+        flex: 1,
         backgroundColor: '#2a2a2a',
         borderRadius: '6px',
         padding: '16px',
+        minHeight: 0,
+        display: 'flex',
+        flexDirection: 'column',
       }}>
         {renderToolComponent()}
       </div>

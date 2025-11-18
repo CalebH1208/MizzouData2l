@@ -20,10 +20,14 @@ export function GetAllFragments():Promise<Array<Backend.Data_fragment>>;
 
 export function GetAvailableTools():Promise<Array<Backend.Tool_info>>;
 
+export function GetConcatenatedFragmentID():Promise<string>;
+
 export function GetFragment(arg1:string):Promise<Backend.Data_fragment>;
 
 export function GetFragmentCount():Promise<number>;
 
 export function GetSourceFragments():Promise<Array<Backend.Data_fragment>>;
+
+export function GetSourceFragmentsMetadata():Promise<Array<Backend.Fragment_metadata>>;
 
 export function HasConcatenatedFragment():Promise<boolean>;

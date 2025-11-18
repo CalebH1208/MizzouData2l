@@ -46,8 +46,16 @@ export function InitializeFromStoredFile() {
   return window['go']['Backend']['Full_graph']['InitializeFromStoredFile']();
 }
 
+export function LoadPreviewChannel(arg1, arg2) {
+  return window['go']['Backend']['Full_graph']['LoadPreviewChannel'](arg1, arg2);
+}
+
 export function MoveChannelToGraph(arg1, arg2) {
   return window['go']['Backend']['Full_graph']['MoveChannelToGraph'](arg1, arg2);
+}
+
+export function PreviewValidationChannel(arg1) {
+  return window['go']['Backend']['Full_graph']['PreviewValidationChannel'](arg1);
 }
 
 export function RegenerateChannelColor(arg1) {

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ToolSelector from './ToolSelector';
 import ToolExecutor from './ToolExecutor';
-import { GetAllFragments, GetSourceFragments, ClearAllFragments, ConcatenateAllFragments } from '../../wailsjs/go/Backend/Tool_manager';
+import { GetSourceFragmentsMetadata, GetConcatenatedFragmentID, ClearAllFragments } from '../../wailsjs/go/Backend/Tool_manager';
 import { Backend } from '../../wailsjs/go/models';
 
 type WorkflowStage = 'tool-selection' | 'tool-execution';
@@ -10,13 +10,13 @@ type WorkflowStage = 'tool-selection' | 'tool-execution';
 const ToolsPage: React.FC = () => {
   const navigate = useNavigate();
   const [currentStage, setCurrentStage] = useState<WorkflowStage>('tool-selection');
-  const [sourceFragments, setSourceFragments] = useState<Backend.Data_fragment[]>([]);
+  const [sourceFragmentsMetadata, setSourceFragmentsMetadata] = useState<Backend.Fragment_metadata[]>([]);
   const [selectedFragmentIndex, setSelectedFragmentIndex] = useState<number>(0);
   const [selectedTool, setSelectedTool] = useState<Backend.Tool_info | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>('');
   const [isConcatenated, setIsConcatenated] = useState(false);
-  const [concatenatedFragment, setConcatenatedFragment] = useState<Backend.Data_fragment | null>(null);
+  const [concatenatedFragmentID, setConcatenatedFragmentID] = useState<string>('');
 
   useEffect(() => {
     // Load all fragments when the page loads
@@ -26,17 +26,25 @@ const ToolsPage: React.FC = () => {
   const loadFragments = async () => {
     try {
       setIsLoading(true);
-      // Get only source fragments (excludes concatenated fragment)
-      const fragments = await GetSourceFragments();
+      // Get only source fragment metadata (lightweight, no data transfer)
+      const fragmentsMetadata = await GetSourceFragmentsMetadata();
 
-      if (!fragments || fragments.length === 0) {
+      if (!fragmentsMetadata || fragmentsMetadata.length === 0) {
         setError('No fragments available. Please place export markers on the graphs page first.');
         setIsLoading(false);
         return;
       }
 
-      setSourceFragments(fragments);
-      setSelectedFragmentIndex(fragments.length - 1); // Default to most recent
+      setSourceFragmentsMetadata(fragmentsMetadata);
+      setSelectedFragmentIndex(fragmentsMetadata.length - 1); // Default to most recent
+
+      // Check if concatenated fragment already exists (pre-created by backend)
+      const concatID = await GetConcatenatedFragmentID();
+      if (concatID) {
+        setConcatenatedFragmentID(concatID);
+        console.log('[ToolsPage] Concatenated fragment already exists:', concatID);
+      }
+
       setIsLoading(false);
     } catch (err) {
       setError(`Failed to load fragments: ${err}`);
@@ -64,20 +72,11 @@ const ToolsPage: React.FC = () => {
     navigate('/graphs');
   };
 
-  const handleConcatenateAll = async () => {
-    try {
-      const concatenatedID = await ConcatenateAllFragments();
-      // Get all fragments (includes concatenated) to find the concatenated one
-      const allFragments = await GetAllFragments();
-
-      // Find and set the concatenated fragment
-      const concatFrag = allFragments.find(f => f.id === concatenatedID);
-      if (concatFrag) {
-        setConcatenatedFragment(concatFrag);
-        setIsConcatenated(true);
-      }
-    } catch (err) {
-      setError(`Failed to concatenate fragments: ${err}`);
+  const handleSelectConcatenated = () => {
+    // Concatenated fragment is pre-created by backend, just switch to it
+    if (concatenatedFragmentID) {
+      setIsConcatenated(true);
+      console.log('[ToolsPage] Switching to concatenated fragment:', concatenatedFragmentID);
     }
   };
 
@@ -86,7 +85,43 @@ const ToolsPage: React.FC = () => {
     setIsConcatenated(false);
   };
 
-  const currentFragment = isConcatenated ? concatenatedFragment : sourceFragments[selectedFragmentIndex];
+  // Create a lightweight fragment object with just metadata (no actual channel data)
+  // This prevents transferring large amounts of data from backend to frontend
+  const currentFragmentInfo: Backend.Data_fragment | null = React.useMemo(() => {
+    if (isConcatenated && concatenatedFragmentID) {
+      // For concatenated fragment, all fragments have the same channels
+      const firstFragment = sourceFragmentsMetadata[0];
+      const channels: Record<string, Backend.Fragment_channel> = {};
+      firstFragment.channelNames?.forEach(name => {
+        channels[name] = Backend.Fragment_channel.createFrom({ name, unit: '', values: [] });
+      });
+
+      return Backend.Data_fragment.createFrom({
+        id: concatenatedFragmentID,
+        name: `All Fragments (n=${sourceFragmentsMetadata.length})`,
+        startTime: Math.min(...sourceFragmentsMetadata.map(f => f.startTime || 0)),
+        endTime: Math.max(...sourceFragmentsMetadata.map(f => f.endTime || 0)),
+        timeStamps: [],
+        channels: channels,
+      });
+    } else if (selectedFragmentIndex >= 0 && selectedFragmentIndex < sourceFragmentsMetadata.length) {
+      const metadata = sourceFragmentsMetadata[selectedFragmentIndex];
+      const channels: Record<string, Backend.Fragment_channel> = {};
+      metadata.channelNames?.forEach(name => {
+        channels[name] = Backend.Fragment_channel.createFrom({ name, unit: '', values: [] });
+      });
+
+      return Backend.Data_fragment.createFrom({
+        id: metadata.id,
+        name: metadata.name,
+        startTime: metadata.startTime,
+        endTime: metadata.endTime,
+        timeStamps: [],
+        channels: channels,
+      });
+    }
+    return null;
+  }, [isConcatenated, concatenatedFragmentID, selectedFragmentIndex, sourceFragmentsMetadata]);
 
   return (
     <div style={{
@@ -143,7 +178,7 @@ const ToolsPage: React.FC = () => {
       </div>
 
       {/* Fragment selector row */}
-      {!isLoading && !error && sourceFragments.length > 0 && (
+      {!isLoading && !error && sourceFragmentsMetadata.length > 0 && (
         <div style={{
           backgroundColor: '#333333',
           padding: '8px 15px',
@@ -163,10 +198,10 @@ const ToolsPage: React.FC = () => {
             Fragment:
           </span>
 
-          {/* All Fragments button - only show if more than one fragment */}
-          {sourceFragments.length > 1 && (
+          {/* All Fragments button - only show if concatenated fragment exists */}
+          {concatenatedFragmentID && (
             <button
-              onClick={handleConcatenateAll}
+              onClick={handleSelectConcatenated}
               style={{
                 backgroundColor: isConcatenated ? '#4ade80' : '#000000',
                 color: isConcatenated ? 'black' : 'white',
@@ -190,11 +225,11 @@ const ToolsPage: React.FC = () => {
                 }
               }}
             >
-              All Fragments (n={sourceFragments.length})
+              All Fragments (n={sourceFragmentsMetadata.length})
             </button>
           )}
 
-          {sourceFragments.map((fragment, idx) => (
+          {sourceFragmentsMetadata.map((fragment, idx) => (
             <button
               key={idx}
               onClick={() => handleSelectIndividualFragment(idx)}
@@ -306,17 +341,17 @@ const ToolsPage: React.FC = () => {
           </div>
         )}
 
-        {!isLoading && !error && currentFragment && currentStage === 'tool-selection' && (
+        {!isLoading && !error && currentFragmentInfo && currentStage === 'tool-selection' && (
           <ToolSelector
-            fragment={currentFragment}
+            fragment={currentFragmentInfo}
             onToolSelected={handleToolSelected}
             onBack={handleBackToGraphs}
           />
         )}
 
-        {!isLoading && !error && currentFragment && currentStage === 'tool-execution' && selectedTool && (
+        {!isLoading && !error && currentFragmentInfo && currentStage === 'tool-execution' && selectedTool && (
           <ToolExecutor
-            fragment={currentFragment}
+            fragment={currentFragmentInfo}
             tool={selectedTool}
             onBack={handleBackToToolSelection}
           />

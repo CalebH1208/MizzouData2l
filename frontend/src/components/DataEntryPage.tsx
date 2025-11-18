@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SetName, Load_telemetry_file, GetAllChannelNames, GetAllChannelUnvalidatedNames, GetData, ValidateChannel, SetConversion,GetConversion,SetUnit,GetUnit, DetectAndCorrectUnsignedErrors, ResetDefaults, DeleteChannel,EnforceRange } from "../../wailsjs/go/backend/Telemetry_file"
 import { LogFile_to_BTF, Write_BTF} from  "../../wailsjs/go/backend/Basic_telemetry_file"
+import { PreviewValidationChannel } from "../../wailsjs/go/Backend/Full_graph"
 import { LogPrint, } from "../../wailsjs/runtime/runtime"
 import { OpenDirectoryDialog } from "../../wailsjs/go/main/App"
 import PopUpDialog from './PopUp';
-import TimeSeriesChart from './TimeSeriesLineChart';
+import TuneGraph from './TuneGraph';
 
 
 const DataEntryPage: React.FC = () => {
@@ -19,12 +20,8 @@ const DataEntryPage: React.FC = () => {
   const [allChannelNames, setAllChannelNames] = useState<string[]>([]);
   const [unvalidatedChannelNames, setUnvalidatedChannelNames] = useState<string[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<string>("");
-  const [chartData, setChartData] = useState<any[]>([]);
   const [hasChannels, setHasChannels] = useState(false);
-  const [windowDimensions, setWindowDimensions] = useState({
-    width: window.innerWidth,
-    height: window.innerHeight
-  });
+  const [graphKey, setGraphKey] = useState<number>(0); // Key to force TuneGraph re-render
 
   // Data modification states
   const [unit, setUnit] = useState<string>("");
@@ -33,21 +30,6 @@ const DataEntryPage: React.FC = () => {
   const [handleUnsignedInts, setHandleUnsignedInts] = useState<boolean>(false);
   const [rangeMax, setRangeMax] = useState<string>("");
   const [rangeMin, setRangeMin] = useState<string>("");
-  
-
-
-  // Handle window resize
-  useEffect(() => {
-    const handleResize = () => {
-      setWindowDimensions({
-        width: window.innerWidth,
-        height: window.innerHeight
-      });
-    };
-
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
 
   // Load channel data when component mounts or after successful data loading
   const loadChannelData = async () => {
@@ -58,10 +40,9 @@ const DataEntryPage: React.FC = () => {
       setAllChannelNames(allNames);
       setUnvalidatedChannelNames(unvalidatedNames);
       setHasChannels(allNames.length > 0);
-      
-      // Clear selected channel and chart data when loading new data
+
+      // Clear selected channel when loading new data
       setSelectedChannel("");
-      setChartData([]);
     } catch (err) {
       LogPrint("Error loading channel data: " + err);
       setAllChannelNames([]);
@@ -84,6 +65,18 @@ const DataEntryPage: React.FC = () => {
       setAllChannelNames([]);
       setUnvalidatedChannelNames([]);
       setHasChannels(false);
+    }
+  };
+
+  // Helper to reload preview graph after data changes
+  const reloadPreview = async () => {
+    if (selectedChannel) {
+      try {
+        await PreviewValidationChannel(selectedChannel);
+        setGraphKey(prev => prev + 1);
+      } catch (err) {
+        LogPrint("Error reloading preview: " + err);
+      }
     }
   };
 
@@ -124,7 +117,6 @@ const DataEntryPage: React.FC = () => {
       
       // Reload channel data after successful parsing
       await loadChannelData();
-      setChartData([]);
     } catch (err) {
       console.log("error parsing data: " + err);
       LogPrint("Error parsing data: " + err);
@@ -138,7 +130,6 @@ const DataEntryPage: React.FC = () => {
   // Handles channel selection and data display
   const handleChannelSelect = async (channelName: string) => {
     if (!channelName) {
-      setChartData([]);
       setSelectedChannel("");
       setHandleUnsignedInts(false);
       setConversionRate("1");
@@ -150,20 +141,15 @@ const DataEntryPage: React.FC = () => {
       setSelectedChannel(channelName);
       const conv = await GetConversion(channelName);
       const unit = await GetUnit(channelName);
-      const data = await GetData(channelName);
-      
+
       setConversionRate(String(conv));
-      setUnit(unit)
-      setChartData([{
-        id: channelName,
-        name: channelName,
-        color: '#F1B82D',
-        dataPoints: data.map((value: number, index: number) => ({
-          index: index,
-          value: value
-        })),
-        graphIndex: 0
-      }]);
+      setUnit(unit);
+
+      // Load channel into Full_graph for preview
+      await PreviewValidationChannel(channelName);
+
+      // Force TuneGraph to re-render with new data
+      setGraphKey(prev => prev + 1);
     } catch (err) {
       LogPrint("Error selecting channel: " + err);
       setPopupMessage("Error selecting channel");
@@ -230,18 +216,8 @@ const DataEntryPage: React.FC = () => {
 
   const handleEnforceRange = async () => {
     try {
-    EnforceRange(selectedChannel,Number(rangeMin),Number(rangeMax));
-    const data = await GetData(selectedChannel);
-                        setChartData([{
-                          id: selectedChannel,
-                          name: selectedChannel,
-                          color: '#F1B82D',
-                          dataPoints: data.map((value: number, index: number) => ({
-                            index: index,
-                            value: value
-                          })),
-                          graphIndex: 0
-                        }]);
+      await EnforceRange(selectedChannel, Number(rangeMin), Number(rangeMax));
+      await reloadPreview();
     } catch (err) {
       LogPrint("Error setting up range: " + err);
       setPopupMessage("Error setting up range: " + err);
@@ -273,22 +249,8 @@ const DataEntryPage: React.FC = () => {
 
       setSelectedChannel(nextChannel);
       const conv = await GetConversion(nextChannel);
-      
       setConversionRate(String(conv));
-      
-      const data = await GetData(nextChannel);
-      setChartData([{
-      id: nextChannel,
-      name: nextChannel,
-      color: '#F1B82D',
-      dataPoints: data.map((value: number, index: number) => ({
-        index: index,
-        value: value
-      })),
-      graphIndex: 0
-    }]);
 
-      
       await handleChannelSelect(nextChannel);
       // Refresh channel data to update validation status
     } catch (err) {
@@ -628,19 +590,9 @@ const DataEntryPage: React.FC = () => {
                           if (handleUnsignedInts) {
                             await DetectAndCorrectUnsignedErrors(selectedChannel);
                           }
-                          
+
                           // Update display
-                          const data = await GetData(selectedChannel);
-                          setChartData([{
-                            id: selectedChannel,
-                            name: selectedChannel,
-                            color: '#F1B82D',
-                            dataPoints: data.map((value: number, index: number) => ({
-                              index: index,
-                              value: value
-                            })),
-                            graphIndex: 0
-                          }]);
+                          await reloadPreview();
                         } else {
                           // Invalid conversion rate (0 or NaN)
                           setConversionRate(String(previousValidRate)); // Revert to previous valid rate
@@ -821,17 +773,7 @@ const DataEntryPage: React.FC = () => {
                         }
                         
                         // Update display
-                        const data = await GetData(selectedChannel);
-                        setChartData([{
-                          id: selectedChannel,
-                          name: selectedChannel,
-                          color: '#F1B82D',
-                          dataPoints: data.map((value: number, index: number) => ({
-                            index: index,
-                            value: value
-                          })),
-                          graphIndex: 0
-                        }]);
+                        await reloadPreview();
                       } catch (err) {
                         LogPrint("Error handling unsigned integers: " + err);
                         setPopupMessage("Error handling unsigned integers");
@@ -860,21 +802,9 @@ const DataEntryPage: React.FC = () => {
                         
                         // Reset backend data
                         await ResetDefaults(selectedChannel);
-                        
-                        // Fetch fresh data after reset
-                        const freshData = await GetData(selectedChannel);
-                        
-                        // Update chart with fresh data
-                        setChartData([{
-                          id: selectedChannel,
-                          name: selectedChannel,
-                          color: '#F1B82D',
-                          dataPoints: freshData.map((value: number, index: number) => ({
-                            index: index,
-                            value: value
-                          })),
-                          graphIndex: 0
-                        }]);
+
+                        // Update preview with reset data
+                        await reloadPreview();
 
                         // Show success message
                         setPopupMessage("Data reset successfully");
@@ -1002,16 +932,23 @@ const DataEntryPage: React.FC = () => {
             <div style={{
               flex: 1,
               minHeight: '400px',
-              width: '100%'
+              width: '100%',
+              position: 'relative'
             }}>
-              <TimeSeriesChart 
-                dataLines={chartData}
-                breaks={[]}
-                width={windowDimensions.width - 40}
-                height={windowDimensions.height - 280}
-                disableContextMenu={true}
-                numGraphs={1}
-              />
+              {selectedChannel ? (
+                <TuneGraph key={graphKey} />
+              ) : (
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  height: '100%',
+                  color: '#F1B82D',
+                  fontSize: '16px'
+                }}>
+                  Select a channel to preview
+                </div>
+              )}
             </div>
           </>
         )}

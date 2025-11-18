@@ -38,6 +38,10 @@ export function GetAvailableTools() {
   return window['go']['Backend']['Tool_manager']['GetAvailableTools']();
 }
 
+export function GetConcatenatedFragmentID() {
+  return window['go']['Backend']['Tool_manager']['GetConcatenatedFragmentID']();
+}
+
 export function GetFragment(arg1) {
   return window['go']['Backend']['Tool_manager']['GetFragment'](arg1);
 }
@@ -48,6 +52,10 @@ export function GetFragmentCount() {
 
 export function GetSourceFragments() {
   return window['go']['Backend']['Tool_manager']['GetSourceFragments']();
+}
+
+export function GetSourceFragmentsMetadata() {
+  return window['go']['Backend']['Tool_manager']['GetSourceFragmentsMetadata']();
 }
 
 export function HasConcatenatedFragment() {

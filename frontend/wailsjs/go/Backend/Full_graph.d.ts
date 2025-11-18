@@ -25,7 +25,11 @@ export function GetViewportData(arg1:Backend.Viewport_request):Promise<Backend.V
 
 export function InitializeFromStoredFile():Promise<void>;
 
+export function LoadPreviewChannel(arg1:Backend.Telemetry_file,arg2:string):Promise<void>;
+
 export function MoveChannelToGraph(arg1:string,arg2:number):Promise<void>;
+
+export function PreviewValidationChannel(arg1:string):Promise<void>;
 
 export function RegenerateChannelColor(arg1:string):Promise<void>;
 
