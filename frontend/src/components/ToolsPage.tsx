@@ -19,14 +19,12 @@ const ToolsPage: React.FC = () => {
   const [concatenatedFragmentID, setConcatenatedFragmentID] = useState<string>('');
 
   useEffect(() => {
-    // Load all fragments when the page loads
     loadFragments();
   }, []);
 
   const loadFragments = async () => {
     try {
       setIsLoading(true);
-      // Get only source fragment metadata (lightweight, no data transfer)
       const fragmentsMetadata = await GetSourceFragmentsMetadata();
 
       if (!fragmentsMetadata || fragmentsMetadata.length === 0) {
@@ -36,13 +34,11 @@ const ToolsPage: React.FC = () => {
       }
 
       setSourceFragmentsMetadata(fragmentsMetadata);
-      setSelectedFragmentIndex(fragmentsMetadata.length - 1); // Default to most recent
+      setSelectedFragmentIndex(fragmentsMetadata.length - 1);
 
-      // Check if concatenated fragment already exists (pre-created by backend)
       const concatID = await GetConcatenatedFragmentID();
       if (concatID) {
         setConcatenatedFragmentID(concatID);
-        console.log('[ToolsPage] Concatenated fragment already exists:', concatID);
       }
 
       setIsLoading(false);
@@ -63,7 +59,6 @@ const ToolsPage: React.FC = () => {
   };
 
   const handleBackToGraphs = async () => {
-    // Clear all fragments before going back
     try {
       await ClearAllFragments();
     } catch (err) {
@@ -73,10 +68,8 @@ const ToolsPage: React.FC = () => {
   };
 
   const handleSelectConcatenated = () => {
-    // Concatenated fragment is pre-created by backend, just switch to it
     if (concatenatedFragmentID) {
       setIsConcatenated(true);
-      console.log('[ToolsPage] Switching to concatenated fragment:', concatenatedFragmentID);
     }
   };
 
@@ -85,11 +78,8 @@ const ToolsPage: React.FC = () => {
     setIsConcatenated(false);
   };
 
-  // Create a lightweight fragment object with just metadata (no actual channel data)
-  // This prevents transferring large amounts of data from backend to frontend
   const currentFragmentInfo: Backend.Data_fragment | null = React.useMemo(() => {
     if (isConcatenated && concatenatedFragmentID) {
-      // For concatenated fragment, all fragments have the same channels
       const firstFragment = sourceFragmentsMetadata[0];
       const channels: Record<string, Backend.Fragment_channel> = {};
       firstFragment.channelNames?.forEach(name => {
@@ -174,10 +164,9 @@ const ToolsPage: React.FC = () => {
           Analysis Tools
         </h1>
 
-        <div style={{ width: '180px' }}></div> {/* Spacer for centering */}
+        <div style={{ width: '180px' }}></div>
       </div>
 
-      {/* Fragment selector row */}
       {!isLoading && !error && sourceFragmentsMetadata.length > 0 && (
         <div style={{
           backgroundColor: '#333333',
@@ -198,7 +187,6 @@ const ToolsPage: React.FC = () => {
             Fragment:
           </span>
 
-          {/* All Fragments button - only show if concatenated fragment exists */}
           {concatenatedFragmentID && (
             <button
               onClick={handleSelectConcatenated}
@@ -260,43 +248,47 @@ const ToolsPage: React.FC = () => {
               ({((fragment.endTime || 0) - (fragment.startTime || 0)).toFixed(2)}s)
             </button>
           ))}
+
+          {currentStage === 'tool-execution' && (
+            <>
+              <div style={{
+                borderLeft: '2px solid #666',
+                height: '24px',
+                marginLeft: '5px'
+              }} />
+              <button
+                onClick={handleBackToToolSelection}
+                style={{
+                  backgroundColor: '#000000',
+                  color: '#F1B82D',
+                  border: '2px solid #F1B82D',
+                  borderRadius: '6px',
+                  padding: '4px 12px',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  whiteSpace: 'nowrap'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#F1B82D';
+                  e.currentTarget.style.color = 'black';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#000000';
+                  e.currentTarget.style.color = '#F1B82D';
+                }}
+              >
+                ← Change Tool
+              </button>
+            </>
+          )}
         </div>
       )}
 
-      {/* Stage indicator */}
-      {!isLoading && !error && (
-        <div style={{
-          backgroundColor: '#2a2a2a',
-          padding: '6px 15px',
-          borderBottom: '1px solid #555',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          fontSize: '12px',
-          color: '#aaa',
-          flexShrink: 0
-        }}>
-          <span style={{
-            color: currentStage === 'tool-selection' ? '#F1B82D' : '#aaa',
-            fontWeight: currentStage === 'tool-selection' ? 600 : 400,
-          }}>
-            Select Tool
-          </span>
-          <span>→</span>
-          <span style={{
-            color: currentStage === 'tool-execution' ? '#F1B82D' : '#aaa',
-            fontWeight: currentStage === 'tool-execution' ? 600 : 400,
-          }}>
-            Execute & View
-          </span>
-        </div>
-      )}
-
-      {/* Main Content */}
       <div style={{
         flex: 1,
         overflow: 'auto',
-        padding: '16px',
       }}>
         {isLoading && (
           <div style={{

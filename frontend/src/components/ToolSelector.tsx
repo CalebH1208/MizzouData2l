@@ -38,7 +38,6 @@ const ToolSelector: React.FC<ToolSelectorProps> = ({
       maxWidth: '1200px',
       margin: '0 auto',
     }}>
-      {/* Fragment Info - Compact */}
       <div style={{
         backgroundColor: '#2a2a2a',
         borderRadius: '6px',
@@ -75,7 +74,6 @@ const ToolSelector: React.FC<ToolSelectorProps> = ({
         </div>
       </div>
 
-      {/* Tool Selection - Compact */}
       <div style={{
         backgroundColor: '#2a2a2a',
         borderRadius: '6px',

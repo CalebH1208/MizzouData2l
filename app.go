@@ -64,6 +64,26 @@ func (a *App) OpenFileDialog() (string, error) {
 	return result, err
 }
 
+func (a *App) SaveFileDialog(defaultFilename string) (string, error) {
+	options := runtime.SaveDialogOptions{
+		Title:           "Export Scatter Plot",
+		DefaultFilename: defaultFilename,
+		Filters: []runtime.FileFilter{
+			{
+				DisplayName: "PNG Images (*.png)",
+				Pattern:     "*.png",
+			},
+		},
+	}
+
+	result, err := runtime.SaveFileDialog(a.ctx, options)
+	return result, err
+}
+
+func (a *App) WriteFile(filePath string, data []byte) error {
+	return os.WriteFile(filePath, data, 0644)
+}
+
 // Greet returns a greeting for the given name
 func (a *App) Greet(name string) string {
 	return fmt.Sprintf("Hello %s, It's show time!", name)

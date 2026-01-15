@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import * as d3 from 'd3';
 import { ExecuteTool } from '../../../wailsjs/go/Backend/Tool_manager';
 import { Backend } from '../../../wailsjs/go/models';
+import { SaveFileDialog, WriteFile } from '../../../wailsjs/go/main/App';
 
 interface XYScatterToolUIProps {
   fragment: Backend.Data_fragment;
@@ -46,7 +47,6 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
   const dragStart = useRef<{ x: number; y: number } | null>(null);
   const dragRect = useRef<SVGRectElement | null>(null);
 
-  // Load presets from localStorage on mount
   useEffect(() => {
     const saved = localStorage.getItem('scatterPlotPresets');
     if (saved) {
@@ -59,24 +59,19 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
   }, []);
 
   useEffect(() => {
-    // Quick reload: Clear result but keep channel selections for convenience
     setResult(null);
     setError('');
     setZoomStack([]);
 
-    // Update available channel names
     const names = Object.keys(fragment.channels || {}).sort();
     setChannelNames(names);
 
-    // If channels aren't selected yet, auto-select first two
     if (!xChannel && !yChannel && names.length >= 2) {
       setXChannel(names[0]);
       setYChannel(names[1]);
     }
 
-    // If current selections are valid in new fragment, auto-execute
     if (xChannel && yChannel && names.includes(xChannel) && names.includes(yChannel)) {
-      // Auto-reload with same channel selections
       const autoReload = async () => {
         try {
           setIsExecuting(true);
@@ -105,7 +100,6 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
     }
   }, [result, zoomStack]);
 
-  // Re-render on window resize
   useEffect(() => {
     const handleResize = () => {
       if (result && result.data) {
@@ -118,7 +112,6 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
   }, [result, zoomStack]);
 
   const handleExecute = async (x?: string, y?: string, color?: string) => {
-    // Use provided values or fall back to state values
     const xChan = x !== undefined ? x : xChannel;
     const yChan = y !== undefined ? y : yChannel;
     const colorChan = color !== undefined ? color : colorChannel;
@@ -192,7 +185,6 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
   const loadPreset = (preset: GraphPreset) => {
     const fieldsChanged = new Set<string>();
 
-    // Check if channels exist in current fragment
     if (!channelNames.includes(preset.xChannel)) {
       fieldsChanged.add('xChannel');
       setError(`X channel "${preset.xChannel}" not found in fragment`);
@@ -216,7 +208,6 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
 
     setInvalidFields(fieldsChanged);
 
-    // Auto-execute if all channels are valid - pass values directly to avoid state timing issues
     if (fieldsChanged.size === 0) {
       handleExecute(preset.xChannel, preset.yChannel, preset.colorChannel);
     }
@@ -228,11 +219,134 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
     localStorage.setItem('scatterPlotPresets', JSON.stringify(updatedPresets));
   };
 
+  const movePresetUp = (index: number) => {
+    if (index > 0) {
+      const updatedPresets = [...presets];
+      [updatedPresets[index], updatedPresets[index - 1]] = [updatedPresets[index - 1], updatedPresets[index]];
+      setPresets(updatedPresets);
+      localStorage.setItem('scatterPlotPresets', JSON.stringify(updatedPresets));
+    }
+  };
+
+  const movePresetDown = (index: number) => {
+    if (index < presets.length - 1) {
+      const updatedPresets = [...presets];
+      [updatedPresets[index], updatedPresets[index + 1]] = [updatedPresets[index + 1], updatedPresets[index]];
+      setPresets(updatedPresets);
+      localStorage.setItem('scatterPlotPresets', JSON.stringify(updatedPresets));
+    }
+  };
+
   const goBackZoom = () => {
     if (zoomStack.length > 0) {
       const newStack = [...zoomStack];
       newStack.pop();
       setZoomStack(newStack);
+    }
+  };
+
+  const handleFeelingLucky = () => {
+    if (channelNames.length < 2) {
+      setError('Need at least 2 channels for random selection');
+      return;
+    }
+
+    const shuffled = [...channelNames].sort(() => Math.random() - 0.5);
+
+    const randomX = shuffled[0];
+    const randomY = shuffled[1];
+    const randomColor = shuffled.length >= 3 ? shuffled[2] : '';
+
+    setXChannel(randomX);
+    setYChannel(randomY);
+    setColorChannel(randomColor);
+    setError('');
+    setInvalidFields(new Set());
+
+    handleExecute(randomX, randomY, randomColor);
+  };
+
+  const exportToPNG = async () => {
+    if (!svgRef.current || !result) return;
+
+    try {
+      // Generate default filename
+      const metadata = result.metadata as any;
+      let defaultFilename = `${metadata.xChannel}_vs_${metadata.yChannel}`;
+      if (metadata.hasColor && metadata.colorChannel) {
+        defaultFilename += `_by_${metadata.colorChannel}`;
+      }
+      defaultFilename += '.png';
+
+      // Open save dialog
+      const filePath = await SaveFileDialog(defaultFilename);
+
+      if (!filePath) {
+        // User cancelled
+        return;
+      }
+
+      // Create a high-resolution copy of the SVG
+      const svgElement = svgRef.current;
+      const svgString = new XMLSerializer().serializeToString(svgElement);
+
+      // Create a blob from the SVG
+      const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(svgBlob);
+
+      // Create an image element
+      const img = new Image();
+      const scale = 3; // 3x resolution for high quality
+
+      img.onload = async () => {
+        // Create a canvas with high resolution
+        const canvas = document.createElement('canvas');
+        canvas.width = svgElement.clientWidth * scale;
+        canvas.height = svgElement.clientHeight * scale;
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        // Scale for high resolution
+        ctx.scale(scale, scale);
+
+        // Fill background (SVG is transparent by default)
+        ctx.fillStyle = '#0a0a0a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw the image
+        ctx.drawImage(img, 0, 0);
+
+        // Convert to PNG blob
+        canvas.toBlob(async (blob) => {
+          if (!blob) return;
+
+          try {
+            // Convert blob to array buffer
+            const arrayBuffer = await blob.arrayBuffer();
+            const uint8Array = new Uint8Array(arrayBuffer);
+
+            // Write file using Wails
+            await WriteFile(filePath, Array.from(uint8Array));
+          } catch (writeErr) {
+            console.error('Failed to write file:', writeErr);
+            setError(`Failed to save file: ${writeErr}`);
+          }
+
+          // Cleanup
+          URL.revokeObjectURL(url);
+        }, 'image/png');
+      };
+
+      img.onerror = () => {
+        setError('Failed to render image');
+        URL.revokeObjectURL(url);
+      };
+
+      img.src = url;
+    } catch (err) {
+      console.error('Failed to export PNG:', err);
+      setError(`Export failed: ${err}`);
     }
   };
 
@@ -251,15 +365,21 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
     const data = result.data as ScatterPoint[];
     const metadata = result.metadata as any;
 
-    // Disable hover for large datasets (>10,000 points) for performance
-    const enableHover = data.length <= 10000;
+    const enableHover = data.length <= 20000;
 
-    // Determine ranges from zoom stack or metadata
     const currentZoom = zoomStack.length > 0 ? zoomStack[zoomStack.length - 1] : null;
-    const xRange = currentZoom ? [currentZoom.xMin, currentZoom.xMax] : (metadata.xRange as number[]);
-    const yRange = currentZoom ? [currentZoom.yMin, currentZoom.yMax] : (metadata.yRange as number[]);
+    let xRange = currentZoom ? [currentZoom.xMin, currentZoom.xMax] : (metadata.xRange as number[]);
+    let yRange = currentZoom ? [currentZoom.yMin, currentZoom.yMax] : (metadata.yRange as number[]);
 
-    // Create scales
+    // Add 10% padding to ranges if not zoomed
+    if (!currentZoom) {
+      const xPadding = (xRange[1] - xRange[0]) * 0.05;
+      xRange = [xRange[0] - xPadding, xRange[1] + xPadding];
+
+      const yPadding = (yRange[1] - yRange[0]) * 0.05;
+      yRange = [yRange[0] - yPadding, yRange[1] + yPadding];
+    }
+
     const xScale = d3.scaleLinear()
       .domain(xRange)
       .range([0, plotWidth]);
@@ -268,11 +388,7 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
       .domain(yRange)
       .range([plotHeight, 0]);
 
-    // Color scale using nipy_spectral-like colormap (matplotlib)
-    // Modified to start at light blue and end at pink (no white or dark colors)
-    // light blue → cyan → green → yellow → orange → red → pink
     const nipySpectralInterpolator = (t: number) => {
-      // Removed dark colors (black, purple, dark blue) and white for visibility
       const colors = [
         [0.3, 0.7, 1.0],      // light blue (start)
         [0.0, 0.8, 0.9],      // cyan
@@ -308,7 +424,6 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
     const g = svg.append('g')
       .attr('transform', `translate(${margin.left},${margin.top})`);
 
-    // Add clipping path to prevent points from overlapping legend
     svg.append('defs')
       .append('clipPath')
       .attr('id', 'plot-clip')
@@ -316,11 +431,9 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
       .attr('width', plotWidth)
       .attr('height', plotHeight);
 
-    // Add axes
     const xAxis = d3.axisBottom(xScale).ticks(8);
     const yAxis = d3.axisLeft(yScale).ticks(8);
 
-    // Add grid lines BEFORE axes so they appear behind
     g.append('g')
       .attr('class', 'grid')
       .attr('transform', `translate(0,${plotHeight})`)
@@ -340,29 +453,31 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
       .attr('stroke', '#333')
       .attr('stroke-opacity', 0.3);
 
-    // Remove grid domain lines
     g.selectAll('.grid .domain').remove();
 
-    // Add axes
     g.append('g')
       .attr('transform', `translate(0,${plotHeight})`)
       .call(xAxis)
       .attr('color', '#aaa')
       .selectAll('text')
-      .attr('fill', '#aaa');
+      .attr('fill', '#aaa')
+      .attr('font-family', 'Arial, sans-serif')
+      .attr('font-size', '12px');
 
     g.append('g')
       .call(yAxis)
       .attr('color', '#aaa')
       .selectAll('text')
-      .attr('fill', '#aaa');
+      .attr('fill', '#aaa')
+      .attr('font-family', 'Arial, sans-serif')
+      .attr('font-size', '12px');
 
-    // Axis labels
     g.append('text')
       .attr('x', plotWidth / 2)
       .attr('y', plotHeight + 45)
       .attr('fill', '#F1B82D')
       .attr('text-anchor', 'middle')
+      .attr('font-family', 'Arial, sans-serif')
       .attr('font-size', '14px')
       .attr('font-weight', 'bold')
       .text(`${metadata.xChannel} (${metadata.xUnit})`);
@@ -373,11 +488,11 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
       .attr('y', -60)
       .attr('fill', '#F1B82D')
       .attr('text-anchor', 'middle')
+      .attr('font-family', 'Arial, sans-serif')
       .attr('font-size', '14px')
       .attr('font-weight', 'bold')
       .text(`${metadata.yChannel} (${metadata.yUnit})`);
 
-    // Color legend if applicable
     if (colorScale && metadata.hasColor) {
       const legendWidth = 20;
       const legendHeight = plotHeight;
@@ -386,7 +501,6 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
       const legendGroup = svg.append('g')
         .attr('transform', `translate(${width - margin.right + 20},${margin.top})`);
 
-      // Create gradient
       const gradient = svg.append('defs')
         .append('linearGradient')
         .attr('id', 'color-gradient')
@@ -411,7 +525,6 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
         .attr('stroke', '#aaa')
         .attr('stroke-width', 1);
 
-      // Legend axis
       const colorRange = metadata.colorRange as number[];
       const legendScale = d3.scaleLinear()
         .domain(colorRange)
@@ -424,21 +537,22 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
         .call(legendAxis)
         .attr('color', '#aaa')
         .selectAll('text')
-        .attr('fill', '#aaa');
+        .attr('fill', '#aaa')
+        .attr('font-family', 'Arial, sans-serif')
+        .attr('font-size', '12px');
 
-      // Legend label
       legendGroup.append('text')
         .attr('transform', `rotate(-90)`)
         .attr('x', -legendHeight / 2)
         .attr('y', legendWidth + 55)
         .attr('fill', '#F1B82D')
         .attr('text-anchor', 'middle')
+        .attr('font-family', 'Arial, sans-serif')
         .attr('font-size', '12px')
         .attr('font-weight', 'bold')
         .text(`${metadata.colorChannel} (${metadata.colorUnit})`);
     }
 
-    // Zoom rectangle overlay (must be BEFORE points so points are on top and receive hover)
     const overlay = g.append('rect')
       .attr('width', plotWidth)
       .attr('height', plotHeight)
@@ -446,7 +560,6 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
       .attr('pointer-events', 'all')
       .style('cursor', 'crosshair');
 
-    // Plot points with clipping (rendered AFTER overlay to be on top)
     const pointsGroup = g.append('g')
       .attr('clip-path', 'url(#plot-clip)');
 
@@ -460,17 +573,14 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
       .attr('fill', d => colorScale && d.color !== undefined ? colorScale(d.color) : '#F1B82D')
       .attr('opacity', 0.7);
 
-    // Only enable hover for datasets with <= 10,000 points
     if (enableHover) {
       circles
         .style('pointer-events', 'all')
         .on('mouseenter', function(event, d) {
-          // Enlarge point slightly on hover
           d3.select(this).attr('r', 4);
           setHoveredPoint(d);
         })
         .on('mouseleave', function() {
-          // Return to normal size
           d3.select(this).attr('r', 2);
           setHoveredPoint(null);
         });
@@ -517,7 +627,6 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
       const width = x - dragStart.current.x;
       const height = y - dragStart.current.y;
 
-      // Only zoom if drag was significant
       if (Math.abs(width) > 10 && Math.abs(height) > 10) {
         const x1 = Math.min(dragStart.current.x, x);
         const x2 = Math.max(dragStart.current.x, x);
@@ -555,8 +664,90 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
     <div style={{
       display: 'flex',
       height: '100%',
+      margin: '8px',
       gap: '8px',
     }}>
+      {/* Data Info Bar */}
+      <div style={{
+        width: '180px',
+        backgroundColor: '#1a1a1a',
+        borderRadius: '4px',
+        border: '1px solid #333',
+        padding: '8px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+        overflowY: 'auto',
+      }}>
+        <h4 style={{ margin: '0', color: '#F1B82D', fontSize: '13px', borderBottom: '1px solid #333', paddingBottom: '6px' }}>
+          Data Info
+        </h4>
+
+        {result && result.metadata ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '11px' }}>
+            {/* X Axis Info */}
+            <div>
+              <div style={{ color: '#4ade80', fontWeight: 'bold', marginBottom: '4px' }}>
+                X: {(result.metadata as any).xChannel}
+              </div>
+              <div style={{ color: '#aaa', fontSize: '10px', marginLeft: '4px' }}>
+                <div>Min: <span style={{ color: '#fff' }}>{(result.metadata as any).xRange?.[0]?.toFixed(3)}</span></div>
+                <div>Max: <span style={{ color: '#fff' }}>{(result.metadata as any).xRange?.[1]?.toFixed(3)}</span></div>
+                <div>Range: <span style={{ color: '#fff' }}>{((result.metadata as any).xRange?.[1] - (result.metadata as any).xRange?.[0])?.toFixed(3)}</span></div>
+                <div>Mean: <span style={{ color: '#fff' }}>{(result.metadata as any).xMean?.toFixed(3)}</span></div>
+                <div>Median: <span style={{ color: '#fff' }}>{(result.metadata as any).xMedian?.toFixed(3)}</span></div>
+                <div>Std Dev: <span style={{ color: '#fff' }}>{(result.metadata as any).xStdDev?.toFixed(3)}</span></div>
+                <div style={{ color: '#666', marginTop: '2px' }}>{(result.metadata as any).xUnit}</div>
+              </div>
+            </div>
+
+            {/* Y Axis Info */}
+            <div>
+              <div style={{ color: '#4ade80', fontWeight: 'bold', marginBottom: '4px' }}>
+                Y: {(result.metadata as any).yChannel}
+              </div>
+              <div style={{ color: '#aaa', fontSize: '10px', marginLeft: '4px' }}>
+                <div>Min: <span style={{ color: '#fff' }}>{(result.metadata as any).yRange?.[0]?.toFixed(3)}</span></div>
+                <div>Max: <span style={{ color: '#fff' }}>{(result.metadata as any).yRange?.[1]?.toFixed(3)}</span></div>
+                <div>Range: <span style={{ color: '#fff' }}>{((result.metadata as any).yRange?.[1] - (result.metadata as any).yRange?.[0])?.toFixed(3)}</span></div>
+                <div>Mean: <span style={{ color: '#fff' }}>{(result.metadata as any).yMean?.toFixed(3)}</span></div>
+                <div>Median: <span style={{ color: '#fff' }}>{(result.metadata as any).yMedian?.toFixed(3)}</span></div>
+                <div>Std Dev: <span style={{ color: '#fff' }}>{(result.metadata as any).yStdDev?.toFixed(3)}</span></div>
+                <div style={{ color: '#666', marginTop: '2px' }}>{(result.metadata as any).yUnit}</div>
+              </div>
+            </div>
+
+            {/* Color Axis Info */}
+            {(result.metadata as any).hasColor && (result.metadata as any).colorChannel && (
+              <div>
+                <div style={{ color: '#4ade80', fontWeight: 'bold', marginBottom: '4px' }}>
+                  Color: {(result.metadata as any).colorChannel}
+                </div>
+                <div style={{ color: '#aaa', fontSize: '10px', marginLeft: '4px' }}>
+                  <div>Min: <span style={{ color: '#fff' }}>{(result.metadata as any).colorRange?.[0]?.toFixed(3)}</span></div>
+                  <div>Max: <span style={{ color: '#fff' }}>{(result.metadata as any).colorRange?.[1]?.toFixed(3)}</span></div>
+                  <div>Range: <span style={{ color: '#fff' }}>{((result.metadata as any).colorRange?.[1] - (result.metadata as any).colorRange?.[0])?.toFixed(3)}</span></div>
+                  <div>Mean: <span style={{ color: '#fff' }}>{(result.metadata as any).colorMean?.toFixed(3)}</span></div>
+                  <div>Median: <span style={{ color: '#fff' }}>{(result.metadata as any).colorMedian?.toFixed(3)}</span></div>
+                  <div>Std Dev: <span style={{ color: '#fff' }}>{(result.metadata as any).colorStdDev?.toFixed(3)}</span></div>
+                  <div style={{ color: '#666', marginTop: '2px' }}>{(result.metadata as any).colorUnit}</div>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div style={{
+            color: '#666',
+            fontSize: '11px',
+            textAlign: 'center',
+            marginTop: '20px',
+            fontStyle: 'italic'
+          }}>
+            No data
+          </div>
+        )}
+      </div>
+
       {/* Main Content Area */}
       <div style={{
         flex: 1,
@@ -574,7 +765,7 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
           display: 'flex',
           alignItems: 'center',
           gap: '8px',
-          flexWrap: 'nowrap',
+          flexWrap: 'wrap',
         }}>
           {/* X Channel */}
           <div style={{ flex: '0 1 200px', minWidth: '150px' }}>
@@ -584,7 +775,18 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
             <select
               value={xChannel}
               onChange={(e) => {
-                setXChannel(e.target.value);
+                const newValue = e.target.value;
+
+                // If new X channel conflicts with Y, swap them
+                if (newValue === yChannel) {
+                  setYChannel(xChannel);
+                }
+                // If new X channel conflicts with Color, swap them
+                else if (newValue === colorChannel) {
+                  setColorChannel(xChannel);
+                }
+
+                setXChannel(newValue);
                 setInvalidFields(prev => {
                   const next = new Set(prev);
                   next.delete('xChannel');
@@ -617,7 +819,18 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
             <select
               value={yChannel}
               onChange={(e) => {
-                setYChannel(e.target.value);
+                const newValue = e.target.value;
+
+                // If new Y channel conflicts with X, swap them
+                if (newValue === xChannel) {
+                  setXChannel(yChannel);
+                }
+                // If new Y channel conflicts with Color, swap them
+                else if (newValue === colorChannel) {
+                  setColorChannel(yChannel);
+                }
+
+                setYChannel(newValue);
                 setInvalidFields(prev => {
                   const next = new Set(prev);
                   next.delete('yChannel');
@@ -650,7 +863,18 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
             <select
               value={colorChannel}
               onChange={(e) => {
-                setColorChannel(e.target.value);
+                const newValue = e.target.value;
+
+                // If new Color channel conflicts with X, swap them
+                if (newValue === xChannel) {
+                  setXChannel(colorChannel);
+                }
+                // If new Color channel conflicts with Y, swap them
+                else if (newValue === yChannel) {
+                  setYChannel(colorChannel);
+                }
+
+                setColorChannel(newValue);
                 setInvalidFields(prev => {
                   const next = new Set(prev);
                   next.delete('colorChannel');
@@ -716,6 +940,49 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
               ← Back ({zoomStack.length})
             </button>
           )}
+
+          <button
+            onClick={handleFeelingLucky}
+            disabled={isExecuting || channelNames.length < 2}
+            style={{
+              padding: '6px 12px',
+              backgroundColor: isExecuting || channelNames.length < 2 ? '#555' : '#9333ea',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '3px',
+              cursor: isExecuting || channelNames.length < 2 ? 'not-allowed' : 'pointer',
+              fontSize: '11px',
+              fontWeight: 'bold',
+              whiteSpace: 'nowrap',
+              height: '32px',
+              marginTop: '14px',
+              marginLeft: 'auto',
+            }}
+            title="Randomly select channels and plot"
+          >
+            I'm Feeling Lucky
+          </button>
+
+          <button
+            onClick={exportToPNG}
+            disabled={!result}
+            style={{
+              padding: '6px 12px',
+              backgroundColor: result ? '#3b82f6' : '#555',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '3px',
+              cursor: result ? 'pointer' : 'not-allowed',
+              fontSize: '11px',
+              fontWeight: 'bold',
+              whiteSpace: 'nowrap',
+              height: '32px',
+              marginTop: '14px',
+            }}
+            title="Export as high-resolution PNG"
+          >
+              Export PNG
+          </button>
         </div>
 
         {/* Error Display */}
@@ -780,8 +1047,7 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
               </div>
             )}
 
-            {/* Hover disabled indicator for large datasets */}
-            {result && result.metadata && (result.metadata as any).pointCount > 10000 && (
+            {result && result.metadata && (result.metadata as any).pointCount > 20000 && (
               <div
                 style={{
                   position: 'absolute',
@@ -800,7 +1066,6 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
               </div>
             )}
 
-            {/* Instructions - only show if no result yet */}
             {!isExecuting && !result && (
               <div style={{
                 position: 'absolute',
@@ -821,7 +1086,6 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
         )}
       </div>
 
-      {/* Presets Sidebar */}
       <div style={{
         width: '200px',
         backgroundColor: '#1a1a1a',
@@ -860,7 +1124,7 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
               No saved presets
             </div>
           ) : (
-            presets.map(preset => (
+            presets.map((preset, index) => (
               <div
                 key={preset.name}
                 style={{
@@ -890,22 +1154,61 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
                 >
                   {preset.name}
                 </button>
-                <button
-                  onClick={() => deletePreset(preset.name)}
-                  style={{
-                    padding: '2px',
-                    backgroundColor: '#ff4444',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: '2px',
-                    cursor: 'pointer',
-                    fontSize: '9px',
-                    fontWeight: 'bold',
-                  }}
-                  title="Delete preset"
-                >
-                  Delete
-                </button>
+                <div style={{ display: 'flex', gap: '2px' }}>
+                  <button
+                    onClick={() => movePresetUp(index)}
+                    disabled={index === 0}
+                    style={{
+                      flex: 1,
+                      padding: '2px',
+                      backgroundColor: index === 0 ? '#333' : '#4ade80',
+                      color: index === 0 ? '#666' : '#000',
+                      border: 'none',
+                      borderRadius: '2px',
+                      cursor: index === 0 ? 'not-allowed' : 'pointer',
+                      fontSize: '9px',
+                      fontWeight: 'bold',
+                    }}
+                    title="Move up"
+                  >
+                    ▲
+                  </button>
+                  <button
+                    onClick={() => movePresetDown(index)}
+                    disabled={index === presets.length - 1}
+                    style={{
+                      flex: 1,
+                      padding: '2px',
+                      backgroundColor: index === presets.length - 1 ? '#333' : '#4ade80',
+                      color: index === presets.length - 1 ? '#666' : '#000',
+                      border: 'none',
+                      borderRadius: '2px',
+                      cursor: index === presets.length - 1 ? 'not-allowed' : 'pointer',
+                      fontSize: '9px',
+                      fontWeight: 'bold',
+                    }}
+                    title="Move down"
+                  >
+                    ▼
+                  </button>
+                  <button
+                    onClick={() => deletePreset(preset.name)}
+                    style={{
+                      flex: 1,
+                      padding: '2px',
+                      backgroundColor: '#ff4444',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '2px',
+                      cursor: 'pointer',
+                      fontSize: '9px',
+                      fontWeight: 'bold',
+                    }}
+                    title="Delete preset"
+                  >
+                    Del
+                  </button>
+                </div>
               </div>
             ))
           )}
