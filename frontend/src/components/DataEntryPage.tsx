@@ -1,12 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { SetName, Load_telemetry_file, GetAllChannelNames, GetAllChannelUnvalidatedNames, GetData, ValidateChannel, SetConversion,GetConversion,SetUnit,GetUnit, DetectAndCorrectUnsignedErrors, ResetDefaults, DeleteChannel,EnforceRange } from "../../wailsjs/go/backend/Telemetry_file"
-import { LogFile_to_BTF, Write_BTF} from  "../../wailsjs/go/backend/Basic_telemetry_file"
+import { SetName, Load_telemetry_file, GetAllChannelNames, GetAllChannelUnvalidatedNames, GetData, ValidateChannel, UnvalidateChannel, SetConversion,GetConversion,SetUnit,GetUnit, DetectAndCorrectUnsignedErrors, ResetDefaults, EnforceRange, SetNegation, GetNegation, ApplyPresetToChannel } from "../../wailsjs/go/backend/Telemetry_file"
+import { LogFile_to_BTF, Write_BTF, Read_BTF, LoadMRTFForEditing } from  "../../wailsjs/go/backend/Basic_telemetry_file"
 import { PreviewValidationChannel } from "../../wailsjs/go/Backend/Full_graph"
+import { FindMatchingPresets, GetAllPresets } from "../../wailsjs/go/Backend/Preset_manager"
 import { LogPrint, } from "../../wailsjs/runtime/runtime"
-import { OpenDirectoryDialog } from "../../wailsjs/go/main/App"
+import { OpenDirectoryDialog, OpenFileDialog } from "../../wailsjs/go/main/App"
+import { Backend } from '../../wailsjs/go/models';
 import PopUpDialog from './PopUp';
 import TuneGraph from './TuneGraph';
+import PresetManagerModal from './PresetManagerModal';
+import PresetSuggestionModal from './PresetSuggestionModal';
 
 
 const DataEntryPage: React.FC = () => {
@@ -30,6 +34,15 @@ const DataEntryPage: React.FC = () => {
   const [handleUnsignedInts, setHandleUnsignedInts] = useState<boolean>(false);
   const [rangeMax, setRangeMax] = useState<string>("");
   const [rangeMin, setRangeMin] = useState<string>("");
+  const [negateChannel, setNegateChannel] = useState<boolean>(false);
+
+  // Preset system states
+  const [presetMatches, setPresetMatches] = useState<Backend.Preset_match[]>([]);
+  const [showPresetSuggestions, setShowPresetSuggestions] = useState(false);
+  const [showPresetManager, setShowPresetManager] = useState(false);
+  const [showPresetSelector, setShowPresetSelector] = useState(false);
+  const [allPresets, setAllPresets] = useState<Backend.Channel_preset[]>([]);
+  const [presetsApplied, setPresetsApplied] = useState<Set<string>>(new Set());
 
   // Load channel data when component mounts or after successful data loading
   const loadChannelData = async () => {
@@ -84,7 +97,17 @@ const DataEntryPage: React.FC = () => {
   useEffect(() => {
     setSelectedChannel("");
     loadChannelData();
+    loadAllPresets();
   }, []);
+
+  const loadAllPresets = async () => {
+    try {
+      const presets = await GetAllPresets();
+      setAllPresets(presets);
+    } catch (err) {
+      LogPrint("Error loading presets: " + err);
+    }
+  };
 
   const handleBack = () => {
     navigate('/');
@@ -114,9 +137,18 @@ const DataEntryPage: React.FC = () => {
       setPopupMessage("Data Parsed!");
       setPopupBg("#2f773aff");
       setShowPopup(true);
-      
+
       // Reload channel data after successful parsing
       await loadChannelData();
+
+      // Find preset matches
+      const allNames = await GetAllChannelNames();
+      const matches = await FindMatchingPresets(allNames);
+      setPresetMatches(matches);
+
+      if (matches.length > 0) {
+        setShowPresetSuggestions(true);
+      }
     } catch (err) {
       console.log("error parsing data: " + err);
       LogPrint("Error parsing data: " + err);
@@ -134,6 +166,7 @@ const DataEntryPage: React.FC = () => {
       setHandleUnsignedInts(false);
       setConversionRate("1");
       setPreviousValidRate(1);
+      setNegateChannel(false);
       return;
     }
 
@@ -141,9 +174,11 @@ const DataEntryPage: React.FC = () => {
       setSelectedChannel(channelName);
       const conv = await GetConversion(channelName);
       const unit = await GetUnit(channelName);
+      const negate = await GetNegation(channelName);
 
       setConversionRate(String(conv));
       setUnit(unit);
+      setNegateChannel(negate);
 
       // Load channel into Full_graph for preview
       await PreviewValidationChannel(channelName);
@@ -161,7 +196,7 @@ const DataEntryPage: React.FC = () => {
   const handleSaveData = async () => {
     try {
       await LogFile_to_BTF();
-      await Write_BTF(false);
+      await Write_BTF(true);
       LogPrint("File stored");
       setPopupMessage("File stored");
       setPopupBg("#42e3ffff");
@@ -173,42 +208,49 @@ const DataEntryPage: React.FC = () => {
       setPopupBg("#fd0000ff");
       setShowPopup(true);
     }
-    
+
   }
 
-  const handleDeleteChannel = async () => {
+  const handleSkipChannel = async () => {
     if (!selectedChannel) {
       setPopupMessage("Please select a channel first");
       setPopupBg("#ff0000ff");
       setShowPopup(true);
       return;
     }
-    if (selectedChannel == "Time"){
-      setPopupMessage("Please don't delete time we need that");
-      setPopupBg("#ff0000ff");
-      setShowPopup(true);
-      return; 
-    }
+
     try {
-      await DeleteChannel(selectedChannel);
-      setPopupMessage(`Channel "${selectedChannel}" has been Deleted!`);
-      setPopupBg("#2f773aff");
-      setShowPopup(true);
+      const isValidated = !unvalidatedChannelNames.includes(selectedChannel);
 
-      
-     await updateChannelData();
+      if (isValidated) {
+        await UnvalidateChannel(selectedChannel);
+        setPopupMessage(`Unvalidated "${selectedChannel}"`);
+        setPopupBg("#ff6600ff");
+        setShowPopup(true);
+      } else {
+        setPopupMessage(`Skipped "${selectedChannel}"`);
+        setPopupBg("#c9a227");
+        setShowPopup(true);
+      }
+
+      await updateChannelData();
       const unvalidatedNames = await GetAllChannelUnvalidatedNames();
-      const nextChannel = unvalidatedNames.length > 0 ? unvalidatedNames[0] : "Time";
 
-      setSelectedChannel(nextChannel);
-      const conv = await GetConversion(nextChannel);
-      
-      setConversionRate(String(conv));
+      if (unvalidatedNames.length === 0) {
+        setPopupMessage("You've reviewed all channels! Starting round two - you can now re-validate any channels you want to adjust.");
+        setPopupBg("#F1B82D");
+        setShowPopup(true);
+        const allNames = await GetAllChannelNames();
+        const nextChannel = allNames.length > 0 ? allNames[0] : "Time";
+        await handleChannelSelect(nextChannel);
+        return;
+      }
 
+      const nextChannel = unvalidatedNames[0];
       await handleChannelSelect(nextChannel);
     } catch (err) {
-      LogPrint("Error deleting channel: " + err);
-      setPopupMessage("Error Deleting channel");
+      LogPrint("Error skipping/unvalidating channel: " + err);
+      setPopupMessage("Error skipping/unvalidating channel");
       setPopupBg("#ff0000ff");
       setShowPopup(true);
     }
@@ -280,6 +322,99 @@ const DataEntryPage: React.FC = () => {
     }
   }
 
+  const handleLoadMRTFFile = async () => {
+    try {
+      const filePath = await OpenFileDialog();
+      if (!filePath) return;
+
+      await Read_BTF(filePath);
+      await LoadMRTFForEditing();
+      await loadChannelData();
+
+      setPopupMessage("MRTF file loaded for editing");
+      setPopupBg("#2f773aff");
+      setShowPopup(true);
+
+      const allNames = await GetAllChannelNames();
+      const matches = await FindMatchingPresets(allNames);
+      setPresetMatches(matches);
+    } catch (err) {
+      LogPrint("Error loading MRTF: " + err);
+      setPopupMessage("Error loading MRTF file: " + err);
+      setPopupBg("#ff0000ff");
+      setShowPopup(true);
+    }
+  };
+
+  const handleApplyPreset = () => {
+    if (!selectedChannel) {
+      setPopupMessage("Please select a channel first");
+      setPopupBg("#ff0000ff");
+      setShowPopup(true);
+      return;
+    }
+    setShowPresetSelector(true);
+  };
+
+  const applyPresetToCurrentChannel = async (preset: Backend.Channel_preset) => {
+    if (!selectedChannel) return;
+
+    try {
+      await ApplyPresetToChannel(selectedChannel, preset);
+
+      const conv = await GetConversion(selectedChannel);
+      const unit = await GetUnit(selectedChannel);
+      const negate = await GetNegation(selectedChannel);
+
+      setConversionRate(String(conv));
+      setUnit(unit);
+      setNegateChannel(negate);
+
+      await reloadPreview();
+
+      setPresetsApplied(prev => new Set(prev).add(selectedChannel));
+      setShowPresetSelector(false);
+
+      setPopupMessage(`Preset "${preset.name}" applied`);
+      setPopupBg("#2f773aff");
+      setShowPopup(true);
+    } catch (err) {
+      LogPrint("Error applying preset: " + err);
+      setPopupMessage("Error applying preset");
+      setPopupBg("#ff0000ff");
+      setShowPopup(true);
+    }
+  };
+
+  const handleConversionBlur = async (e: React.FocusEvent<HTMLInputElement>) => {
+    const rawValue = e.target.value;
+    const numValue = Number(rawValue);
+
+    if (isNaN(numValue) || numValue === 0) {
+      setPopupMessage("Invalid conversion rate");
+      setPopupBg("#ff00FFFF");
+      setShowPopup(true);
+      setConversionRate(String(previousValidRate));
+      return;
+    }
+
+    const formattedValue = Number(numValue.toFixed(6));
+    setConversionRate(String(formattedValue));
+    setPreviousValidRate(formattedValue);
+
+    if (selectedChannel) {
+      try {
+        await SetConversion(selectedChannel, formattedValue);
+        if (negateChannel) {
+          await SetNegation(selectedChannel, true);
+        }
+        await reloadPreview();
+      } catch (err) {
+        LogPrint("Error setting conversion: " + err);
+      }
+    }
+  };
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -329,7 +464,24 @@ const DataEntryPage: React.FC = () => {
         }}>
           Data Entry
         </h1>
-        <div style={{ width: '120px' }}></div>
+        <button
+          onClick={() => setShowPresetManager(true)}
+          style={{
+            backgroundColor: '#6c4fc7',
+            color: 'white',
+            border: '2px solid #F1B82D',
+            borderRadius: '8px',
+            padding: '12px 24px',
+            fontSize: '14px',
+            fontWeight: 'bold',
+            cursor: 'pointer',
+            transition: 'all 0.3s ease'
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#7d5fd8'}
+          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#6c4fc7'}
+        >
+          ⚙ Manage Presets
+        </button>
       </div>
 
       {/* New row with telemetry inputs */}
@@ -408,6 +560,27 @@ const DataEntryPage: React.FC = () => {
         />
 
         <button
+          onClick={handleLoadMRTFFile}
+          style={{
+            backgroundColor: '#6c4fc7',
+            color: 'white',
+            border: '2px solid #F1B82D',
+            borderRadius: '6px',
+            padding: '6px 12px',
+            fontSize: '13px',
+            fontWeight: 'bold',
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+            flexShrink: 0,
+            whiteSpace: 'nowrap'
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#7d5fd8'}
+          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#6c4fc7'}
+        >
+          📂 Load MRTF File
+        </button>
+
+        <button
           onClick={startValidatingData}
           style={{
             backgroundColor: '#000000',
@@ -483,7 +656,15 @@ const DataEntryPage: React.FC = () => {
                 value={selectedChannel}
                 onChange={(e) => handleChannelSelect(e.target.value)}
                 style={{
-                  backgroundColor: '#1a1a1a',
+                  backgroundColor: (() => {
+                    if (!selectedChannel) return '#1a1a1a';
+                    const isValidated = !unvalidatedChannelNames.includes(selectedChannel);
+                    const presetApplied = presetsApplied.has(selectedChannel);
+
+                    if (presetApplied) return '#c9a227'; // yellow
+                    if (isValidated) return '#2f773a'; // green
+                    return '#773a2f'; // red
+                  })(),
                   color: 'white',
                   border: '2px solid #F1B82D',
                   borderRadius: '6px',
@@ -496,16 +677,26 @@ const DataEntryPage: React.FC = () => {
                 <option value="">Select a channel...</option>
                 {allChannelNames.map((channelName) => {
                   const isValidated = !unvalidatedChannelNames.includes(channelName);
+                  const hasPreset = presetMatches.some(m => m.ChannelName === channelName);
+                  const presetApplied = presetsApplied.has(channelName);
+
+                  let bgColor = '#773a2f';
+                  if (presetApplied) {
+                    bgColor = '#c9a227';
+                  } else if (isValidated) {
+                    bgColor = '#2f773a';
+                  }
+
                   return (
                     <option
                       key={channelName}
                       value={channelName}
                       style={{
-                        backgroundColor: isValidated ? '#2f773a' : '#773a2f',
+                        backgroundColor: bgColor,
                         color: 'white'
                       }}
                     >
-                      {channelName} {isValidated ? '✓' : '✗'}
+                      {channelName} {isValidated ? '✓' : '✗'} {hasPreset ? '⚙' : ''}
                     </option>
                   );
                 })}
@@ -569,50 +760,11 @@ const DataEntryPage: React.FC = () => {
                 <input
                   type="text"
                   value={conversionRate}
-                  onChange={(e) => {
-                    // Just update the display value, don't process yet
-                    setConversionRate(e.target.value);
-                  }}
-                  onBlur={async (e) => {
-                    // Process the value when the input loses focus
-                    if (selectedChannel) {
-                      try {
-                        const convRate = Number(e.target.value);
-                        
-                        // Validate the conversion rate
-                        if (!isNaN(convRate) && convRate !== 0) {
-                          setPreviousValidRate(convRate); // Store the valid rate
-                          
-                          // Apply new conversion
-                          await SetConversion(selectedChannel, convRate);
-                          
-                          // Reapply unsigned correction if it was enabled
-                          if (handleUnsignedInts) {
-                            await DetectAndCorrectUnsignedErrors(selectedChannel);
-                          }
-
-                          // Update display
-                          await reloadPreview();
-                        } else {
-                          // Invalid conversion rate (0 or NaN)
-                          setConversionRate(String(previousValidRate)); // Revert to previous valid rate
-                          setPopupMessage(convRate === 0 ? "Conversion rate cannot be zero" : "Invalid conversion rate");
-                          setPopupBg("#ff00FFFF");
-                          setShowPopup(true);
-                        }
-                      } catch (err) {
-                        LogPrint("Error updating conversion: " + err);
-                        setPopupMessage("Error updating conversion");
-                        setPopupBg("#ff0000ff");
-                        setShowPopup(true);
-                        setConversionRate(String(previousValidRate)); // Revert to previous valid rate on error
-                      }
-                    }
-                  }}
+                  onChange={(e) => setConversionRate(e.target.value)}
+                  onBlur={handleConversionBlur}
                   onKeyDown={(e) => {
-                    // Process on Enter key
                     if (e.key === 'Enter') {
-                      e.currentTarget.blur(); // Remove focus to trigger onBlur
+                      e.currentTarget.blur();
                     }
                   }}
                   style={{
@@ -625,6 +777,36 @@ const DataEntryPage: React.FC = () => {
                   }}
                   step="any"
                   placeholder="Rate"
+                />
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: '50px' }}>
+                <label style={{ color: 'white', fontSize: '14px' }}>Negate:</label>
+                <input
+                  type="checkbox"
+                  checked={negateChannel}
+                  onChange={async (e) => {
+                    const isChecked = e.target.checked;
+                    setNegateChannel(isChecked);
+
+                    if (selectedChannel) {
+                      try {
+                        await SetNegation(selectedChannel, isChecked);
+                        await reloadPreview();
+                      } catch (err) {
+                        LogPrint("Error setting negation: " + err);
+                        setPopupMessage("Error setting negation");
+                        setPopupBg("#ff0000ff");
+                        setShowPopup(true);
+                      }
+                    }
+                  }}
+                  style={{
+                    width: '20px',
+                    height: '20px',
+                    accentColor: '#F1B82D',
+                    cursor: 'pointer'
+                  }}
                 />
               </div>
 
@@ -861,13 +1043,43 @@ const DataEntryPage: React.FC = () => {
                   }
                 }}
               >
-                Validata Channel
+                Validate Channel
               </button>
+
               <button
-                onClick={handleDeleteChannel}
+                onClick={handleApplyPreset}
                 disabled={!selectedChannel}
                 style={{
-                  backgroundColor: selectedChannel ? '#ff0000ff' : '#444',
+                  backgroundColor: selectedChannel ? '#6c4fc7' : '#444',
+                  color: 'white',
+                  border: '2px solid #F1B82D',
+                  borderRadius: '6px',
+                  padding: '8px 6px',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  cursor: selectedChannel ? 'pointer' : 'not-allowed',
+                  transition: 'all 0.3s ease',
+                  whiteSpace: 'nowrap'
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedChannel) {
+                    e.currentTarget.style.backgroundColor = '#7d5fd8';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (selectedChannel) {
+                    e.currentTarget.style.backgroundColor = '#6c4fc7';
+                  }
+                }}
+              >
+                Apply Preset
+              </button>
+
+              <button
+                onClick={handleSkipChannel}
+                disabled={!selectedChannel}
+                style={{
+                  backgroundColor: selectedChannel ? '#c9a227' : '#444',
                   color: 'white',
                   border: '2px solid #F1B82D',
                   borderRadius: '6px',
@@ -880,16 +1092,16 @@ const DataEntryPage: React.FC = () => {
                 }}
                 onMouseEnter={(e) => {
                   if (selectedChannel) {
-                    e.currentTarget.style.backgroundColor = '#dd5555ff';
+                    e.currentTarget.style.backgroundColor = '#d4b030';
                   }
                 }}
                 onMouseLeave={(e) => {
                   if (selectedChannel) {
-                    e.currentTarget.style.backgroundColor = '#ff0000ff';
+                    e.currentTarget.style.backgroundColor = '#c9a227';
                   }
                 }}
               >
-                Delete Channel
+                Skip/Unvalidate
               </button>
               
               <button
@@ -936,7 +1148,7 @@ const DataEntryPage: React.FC = () => {
               position: 'relative'
             }}>
               {selectedChannel ? (
-                <TuneGraph key={graphKey} />
+                <TuneGraph key={graphKey} disableContextMenu={true} />
               ) : (
                 <div style={{
                   display: 'flex',
@@ -953,6 +1165,156 @@ const DataEntryPage: React.FC = () => {
           </>
         )}
       </div>
+
+      {/* Preset Manager Modal */}
+      {showPresetManager && (
+        <PresetManagerModal onClose={() => setShowPresetManager(false)} />
+      )}
+
+      {/* Preset Suggestion Modal */}
+      {showPresetSuggestions && (
+        <PresetSuggestionModal
+          matches={presetMatches}
+          onClose={() => setShowPresetSuggestions(false)}
+          onApplied={async (appliedChannels: string[]) => {
+            setPresetsApplied(prev => {
+              const newSet = new Set(prev);
+              appliedChannels.forEach(ch => newSet.add(ch));
+              return newSet;
+            });
+            await loadChannelData();
+            await reloadPreview();
+          }}
+        />
+      )}
+
+      {/* Preset Selector Modal */}
+      {showPresetSelector && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: '#1a1a1a',
+            width: '600px',
+            maxHeight: '700px',
+            borderRadius: '12px',
+            border: '2px solid #F1B82D',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden'
+          }}>
+            <div style={{
+              padding: '20px',
+              borderBottom: '2px solid #F1B82D',
+              backgroundColor: '#000000',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <h2 style={{ color: '#F1B82D', margin: 0, fontSize: '20px' }}>
+                Select Preset for "{selectedChannel}"
+              </h2>
+              <button
+                onClick={() => setShowPresetSelector(false)}
+                style={{
+                  backgroundColor: '#773a2f',
+                  color: 'white',
+                  border: '2px solid #F1B82D',
+                  borderRadius: '6px',
+                  padding: '8px 16px',
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold'
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+            <div style={{ flex: 1, overflow: 'auto', padding: '15px' }}>
+              {(() => {
+                const suggestedPreset = presetMatches.find(m => m.ChannelName === selectedChannel)?.MatchedPreset;
+                const otherPresets = allPresets.filter(p => p.name !== suggestedPreset?.name);
+
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {suggestedPreset && (
+                      <>
+                        <div style={{ color: '#F1B82D', fontSize: '14px', fontWeight: 'bold', marginBottom: '5px' }}>
+                          Suggested:
+                        </div>
+                        <button
+                          onClick={() => applyPresetToCurrentChannel(suggestedPreset)}
+                          style={{
+                            backgroundColor: '#2f773a',
+                            color: 'white',
+                            border: '2px solid #F1B82D',
+                            borderRadius: '6px',
+                            padding: '12px',
+                            fontSize: '14px',
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            transition: 'all 0.3s ease'
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#4a9f5a'}
+                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#2f773a'}
+                        >
+                          <div style={{ fontWeight: 'bold' }}>{suggestedPreset.name}</div>
+                          <div style={{ fontSize: '12px', color: '#ccc', marginTop: '4px' }}>
+                            {suggestedPreset.presetType} • {suggestedPreset.unit} • ×{suggestedPreset.conversionRate.toFixed(4)}
+                          </div>
+                        </button>
+                        <div style={{ color: '#F1B82D', fontSize: '14px', fontWeight: 'bold', marginTop: '15px', marginBottom: '5px' }}>
+                          All Presets:
+                        </div>
+                      </>
+                    )}
+                    {otherPresets.map(preset => (
+                      <button
+                        key={preset.name}
+                        onClick={() => applyPresetToCurrentChannel(preset)}
+                        style={{
+                          backgroundColor: '#333',
+                          color: 'white',
+                          border: '2px solid #666',
+                          borderRadius: '6px',
+                          padding: '12px',
+                          fontSize: '14px',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          transition: 'all 0.3s ease'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.backgroundColor = '#444';
+                          e.currentTarget.style.borderColor = '#F1B82D';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.backgroundColor = '#333';
+                          e.currentTarget.style.borderColor = '#666';
+                        }}
+                      >
+                        <div style={{ fontWeight: 'bold' }}>{preset.name}</div>
+                        <div style={{ fontSize: '12px', color: '#ccc', marginTop: '4px' }}>
+                          {preset.presetType} • {preset.unit} • ×{preset.conversionRate.toFixed(4)}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

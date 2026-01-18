@@ -2,7 +2,12 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as d3 from 'd3';
 import { GetGraphMetadata, GetViewportData, SetCursorPosition, GetCursorData, AddExportMarker, RemoveExportMarker } from '../../wailsjs/go/Backend/Full_graph';
 import { Backend } from '../../wailsjs/go/models';
-import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime';
+import { EventsOn, EventsOff, EventsEmit } from '../../wailsjs/runtime/runtime';
+
+// Sanitize channel name for use in CSS class selector
+function sanitizeClassName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]/g, '-');
+}
 
 // Throttle utility function - limits function execution to once per wait period
 function throttle<T extends (...args: any[]) => any>(func: T, wait: number): (...args: Parameters<T>) => void {
@@ -28,9 +33,10 @@ function throttle<T extends (...args: any[]) => any>(func: T, wait: number): (..
 interface TuneGraphProps {
   width?: number;
   height?: number;
+  disableContextMenu?: boolean;
 }
 
-const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHeight }) => {
+const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHeight, disableContextMenu = false }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -234,6 +240,9 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
     if (!metadata || viewportStart === 0 || viewportEnd === 0) return;
 
     throttledLoadViewportData(viewportStart, viewportEnd);
+
+    // Emit viewport update event for GraphsPage to track current viewport
+    EventsEmit('viewport-update', { start: viewportStart, end: viewportEnd });
   }, [viewportStart, viewportEnd, metadata, throttledLoadViewportData]);
 
   // Throttled cursor data loader (40ms throttle for smooth dragging)
@@ -258,18 +267,36 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
     throttledLoadCursorData();
   }, [cursorTime, throttledLoadCursorData]);
 
+  // Track pending viewport restore (for preset loading)
+  const pendingViewportRestore = useRef<{ start: number; end: number } | null>(null);
+
   // Listen for graph refresh events from ChannelManager window
   useEffect(() => {
     const handleGraphRefresh = () => {
-      // Reload metadata when ChannelManager makes changes
       const reloadData = async () => {
         try {
+          const previousViewportStart = viewportStart;
+          const previousViewportEnd = viewportEnd;
+          const isInitialLoad = previousViewportStart === 0 || previousViewportEnd === 0;
+
           const meta = await GetGraphMetadata();
           setMetadata(meta);
 
           if (meta && meta.timeRange) {
-            setViewportStart(meta.timeRange[0]);
-            setViewportEnd(meta.timeRange[1]);
+            // Check if there's a pending viewport restore (from preset loading)
+            if (pendingViewportRestore.current) {
+              setViewportStart(pendingViewportRestore.current.start);
+              setViewportEnd(pendingViewportRestore.current.end);
+              pendingViewportRestore.current = null;
+            } else if (isInitialLoad ||
+                previousViewportStart < meta.timeRange[0] ||
+                previousViewportEnd > meta.timeRange[1]) {
+              setViewportStart(meta.timeRange[0]);
+              setViewportEnd(meta.timeRange[1]);
+            } else {
+              setViewportStart(previousViewportStart);
+              setViewportEnd(previousViewportEnd);
+            }
           }
         } catch (err) {
           console.error('Error refreshing data:', err);
@@ -278,12 +305,22 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       reloadData();
     };
 
+    const handleViewportRestore = (data: { start: number; end: number }) => {
+      console.log('Restoring viewport to:', data);
+      // Store the pending viewport restore so it can be applied after metadata loads
+      pendingViewportRestore.current = data;
+      setViewportStart(data.start);
+      setViewportEnd(data.end);
+    };
+
     EventsOn('graph-refresh', handleGraphRefresh);
+    EventsOn('viewport-restore', handleViewportRestore);
 
     return () => {
       EventsOff('graph-refresh');
+      EventsOff('viewport-restore');
     };
-  }, []);
+  }, [viewportStart, viewportEnd]);
 
   // Render the chart
   useEffect(() => {
@@ -342,14 +379,15 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
 
           // Draw points when detailed enough
           if (viewportData.lodStep === 1 && viewportData.totalPoints <= 200) {
-            g.selectAll(`circle.point-${graphIndex}-${channel.name}`)
+            const sanitizedName = sanitizeClassName(channel.name);
+            g.selectAll(`circle.point-${graphIndex}-${sanitizedName}`)
               .data(normalizedValues.map((v, i) => ({
                 x: viewportData.timestamps[i],
                 y: v
               })))
               .enter()
               .append('circle')
-              .attr('class', `point-${graphIndex}-${channel.name}`)
+              .attr('class', `point-${graphIndex}-${sanitizedName}`)
               .attr('cx', d => xScale(d.x))
               .attr('cy', d => normalizedYScale(d.y))
               .attr('r', pointRadius)
@@ -412,14 +450,15 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
 
           // Draw points when detailed enough
           if (viewportData.lodStep === 1 && viewportData.totalPoints <= 200) {
-            g.selectAll(`circle.point-${graphIndex}-${channel.name}`)
+            const sanitizedName = sanitizeClassName(channel.name);
+            g.selectAll(`circle.point-${graphIndex}-${sanitizedName}`)
               .data(channel.values.map((v, i) => ({
                 x: viewportData.timestamps[i],
                 y: v
               })))
               .enter()
               .append('circle')
-              .attr('class', `point-${graphIndex}-${channel.name}`)
+              .attr('class', `point-${graphIndex}-${sanitizedName}`)
               .attr('cx', d => xScale(d.x))
               .attr('cy', d => yScale(d.y))
               .attr('r', pointRadius)
@@ -544,7 +583,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       .attr('text-anchor', 'middle')
       .attr('fill', '#F1B82D')
       .attr('font-size', `${fontSize}px`)
-      .text('Time (ms)');
+      .text('Time (s)');
 
   }, [viewportData, metadata, chartWidth, chartHeight, height, width, margin.top, margin.left, margin.right, margin.bottom, cursorTime, cursorData, fontSize, strokeWidth, pointRadius, cursorStrokeWidth, forceRender]);
 
@@ -764,9 +803,11 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       });
     };
 
-    container.addEventListener('contextmenu', onContextMenu);
-    return () => container.removeEventListener('contextmenu', onContextMenu);
-  }, [viewportData, margin.left, chartWidth]);
+    if (!disableContextMenu) {
+      container.addEventListener('contextmenu', onContextMenu);
+      return () => container.removeEventListener('contextmenu', onContextMenu);
+    }
+  }, [viewportData, margin.left, chartWidth, disableContextMenu]);
 
   // Close context menu on click outside
   useEffect(() => {

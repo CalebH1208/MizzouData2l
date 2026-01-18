@@ -16,6 +16,7 @@ type Telemetry_channel struct {
 	Unit         string
 	Conversion   float32
 	OriginalConv float32
+	NegateData   bool
 	is_Validated bool
 	Data         []float32
 	OriginalData []float32
@@ -104,7 +105,7 @@ func (file *Telemetry_file) Load_telemetry_file(path string) error {
 		if p == 32 {
 			p = 1
 		}
-		file.Channels = append(file.Channels, Telemetry_channel{names[i], units[i], float32(c / p), float32(c / p), false, []float32{}, []float32{}})
+		file.Channels = append(file.Channels, Telemetry_channel{names[i], units[i], float32(c / p), float32(c / p), false, false, []float32{}, []float32{}})
 	}
 
 	for {
@@ -178,6 +179,16 @@ func (file *Telemetry_file) ValidateChannel(name string) error {
 	return fmt.Errorf("missing name %s", name)
 }
 
+func (file *Telemetry_file) UnvalidateChannel(name string) error {
+	for i, channel := range file.Channels {
+		if channel.Name == name {
+			file.Channels[i].is_Validated = false
+			return nil
+		}
+	}
+	return fmt.Errorf("missing name %s", name)
+}
+
 func (file *Telemetry_file) SetConversion(name string, conv float32) error {
 	for i, channel := range file.Channels {
 		if channel.Name == name {
@@ -187,7 +198,11 @@ func (file *Telemetry_file) SetConversion(name string, conv float32) error {
 			// Create fresh data array and apply conversion to original data
 			file.Channels[i].Data = make([]float32, len(file.Channels[i].OriginalData))
 			for j := range file.Channels[i].OriginalData {
-				file.Channels[i].Data[j] = conv * file.Channels[i].OriginalData[j]
+				value := conv * file.Channels[i].OriginalData[j]
+				if file.Channels[i].NegateData {
+					value = -value
+				}
+				file.Channels[i].Data[j] = value
 			}
 			return nil
 		}
@@ -310,4 +325,62 @@ func (file *Telemetry_file) GetUnit(name string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("missing name %s", name)
+}
+
+func (file *Telemetry_file) SetNegation(name string, negate bool) error {
+	for i, channel := range file.Channels {
+		if channel.Name == name {
+			file.Channels[i].NegateData = negate
+
+			file.Channels[i].Data = make([]float32, len(file.Channels[i].OriginalData))
+			for j := range file.Channels[i].OriginalData {
+				value := file.Channels[i].Conversion * file.Channels[i].OriginalData[j]
+				if negate {
+					value = -value
+				}
+				file.Channels[i].Data[j] = value
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("missing name %s", name)
+}
+
+func (file *Telemetry_file) GetNegation(name string) (bool, error) {
+	for _, channel := range file.Channels {
+		if channel.Name == name {
+			return channel.NegateData, nil
+		}
+	}
+	return false, fmt.Errorf("missing name %s", name)
+}
+
+func (file *Telemetry_file) ApplyPresetToChannel(channelName string, preset Channel_preset) error {
+	for i, channel := range file.Channels {
+		if channel.Name == channelName {
+			file.Channels[i].Unit = preset.Unit
+			file.Channels[i].Conversion = preset.ConversionRate
+			file.Channels[i].NegateData = preset.NegateData
+
+			file.Channels[i].Data = make([]float32, len(file.Channels[i].OriginalData))
+			for j := range file.Channels[i].OriginalData {
+				value := preset.ConversionRate * file.Channels[i].OriginalData[j]
+				if preset.NegateData {
+					value = -value
+				}
+				file.Channels[i].Data[j] = value
+			}
+
+			if preset.UnsignedCorrect {
+				file.DetectAndCorrectUnsignedErrors(channelName)
+			}
+
+			if preset.HasRangeLimit {
+				file.EnforceRange(channelName, preset.RangeMin, preset.RangeMax)
+			}
+
+			return nil
+		}
+	}
+	return fmt.Errorf("channel '%s' not found", channelName)
 }

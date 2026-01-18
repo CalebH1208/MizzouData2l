@@ -21,6 +21,11 @@ func main() {
 	storedFileManager := Backend.New_BTF(logFileParser)
 	tuneGraph := Backend.New_full_graph(storedFileManager)
 	toolManager := Backend.New_tool_manager(tuneGraph)
+	presetManager := Backend.New_preset_manager()
+
+	if err := presetManager.LoadPresets(); err != nil {
+		println("Warning: Could not load presets:", err.Error())
+	}
 
 	err := wails.Run(&options.App{
 		Title:             "MizzouDataTool",
@@ -38,6 +43,7 @@ func main() {
 			storedFileManager,
 			tuneGraph,
 			toolManager,
+			presetManager,
 		},
 	})
 

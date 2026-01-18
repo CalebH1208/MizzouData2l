@@ -91,9 +91,6 @@ func (a *App) Greet(name string) string {
 
 // OpenChannelManagerWindow opens a new window for the Channel Manager
 func (a *App) OpenChannelManagerWindow() {
-	// In Wails v2, we don't have native multi-window support
-	// So we'll emit an event that the frontend will handle
-	// The frontend will use window.open() with the proper production-safe approach
 	runtime.EventsEmit(a.ctx, "open-channel-manager")
 }
 

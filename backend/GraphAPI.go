@@ -124,6 +124,7 @@ type Channel_info struct {
 type Graph_configuration struct {
 	Title        string   `json:"title"`
 	ChannelNames []string `json:"channelNames"`
+	UseSplitAxis bool     `json:"useSplitAxis"`
 }
 
 func New_full_graph(SFM *Basic_telemetry_file) *Full_graph {
@@ -139,6 +140,21 @@ func New_full_graph(SFM *Basic_telemetry_file) *Full_graph {
 
 func (fg *Full_graph) SetContext(ctx context.Context) {
 	fg.ctx = ctx
+}
+
+func (fg *Full_graph) ClearGraphState() error {
+	fg.mutex.Lock()
+	defer fg.mutex.Unlock()
+
+	fg.Graphs = make([]Solo_graph, 0)
+	fg.BreakLines = make([]float64, 0)
+	fg.ExportStartLines = make([]float64, 0)
+	fg.ExportEndLines = make([]float64, 0)
+	fg.CursorPos = 0
+	fg.ViewableChannels = make(map[string]*Data_channel)
+	fg.FullTimeStamps = make([]float64, 0)
+
+	return nil
 }
 
 func (fg *Full_graph) InitializeFromStoredFile() error {
@@ -946,6 +962,46 @@ func (fg *Full_graph) ConfigureGraphsFromLayout(configs []Graph_configuration) e
 	}
 
 	return nil
+}
+
+func (fg *Full_graph) LoadGraphConfiguration(configs []Graph_configuration) error {
+	fg.mutex.Lock()
+	defer fg.mutex.Unlock()
+
+	for _, channel := range fg.ViewableChannels {
+		channel.GraphIndex = -1
+	}
+	fg.Graphs = make([]Solo_graph, 0)
+
+	for graphIdx, config := range configs {
+		validChannels := make([]string, 0)
+		for _, channelName := range config.ChannelNames {
+			if _, exists := fg.ViewableChannels[channelName]; exists {
+				validChannels = append(validChannels, channelName)
+			} else {
+				fmt.Printf("[LoadGraphConfiguration] Skipping missing channel: %s\n", channelName)
+			}
+		}
+
+		if len(validChannels) == 0 {
+			continue
+		}
+
+		fg.Graphs = append(fg.Graphs, Solo_graph{
+			Index:         graphIdx,
+			Title:         config.Title,
+			YRange:        [2]float64{0, 0},
+			DataChannels:  validChannels,
+			UseSplitAxis:  config.UseSplitAxis,
+			ChannelRanges: make(map[string][2]float64),
+		})
+
+		for _, channelName := range validChannels {
+			fg.ViewableChannels[channelName].GraphIndex = graphIdx
+		}
+	}
+
+	return fg.calculateYRangeForEachGraph()
 }
 
 // ExtractRawDataBetweenTimes creates a Data_fragment with all channels' data

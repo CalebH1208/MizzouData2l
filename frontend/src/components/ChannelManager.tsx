@@ -11,6 +11,8 @@ import {
 } from '../../wailsjs/go/Backend/Full_graph';
 import { NotifyGraphRefresh } from '../../wailsjs/go/main/App';
 import { Backend } from '../../wailsjs/go/models';
+import ConfirmDialog from './ConfirmDialog';
+import PopUpDialog from './PopUp';
 
 type ViewMode = 'main' | 'channels' | 'graphs';
 
@@ -19,6 +21,8 @@ const ChannelManager: React.FC = () => {
   const [channels, setChannels] = useState<Backend.Channel_info[]>([]);
   const [metadata, setMetadata] = useState<Backend.Graph_metadata | null>(null);
   const [loading, setLoading] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ graphIndex: number } | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -51,7 +55,7 @@ const ChannelManager: React.FC = () => {
       await notifyAndRefresh();
     } catch (err) {
       console.error('Error adding channel:', err);
-      alert(`Error: ${err}`);
+      setErrorMessage(`Error: ${err}`);
     }
   };
 
@@ -61,7 +65,7 @@ const ChannelManager: React.FC = () => {
       await notifyAndRefresh();
     } catch (err) {
       console.error('Error removing channel:', err);
-      alert(`Error: ${err}`);
+      setErrorMessage(`Error: ${err}`);
     }
   };
 
@@ -71,7 +75,7 @@ const ChannelManager: React.FC = () => {
       await notifyAndRefresh();
     } catch (err) {
       console.error('Error moving channel:', err);
-      alert(`Error: ${err}`);
+      setErrorMessage(`Error: ${err}`);
     }
   };
 
@@ -81,7 +85,7 @@ const ChannelManager: React.FC = () => {
       await notifyAndRefresh();
     } catch (err) {
       console.error('Error toggling split-axis mode:', err);
-      alert(`Error: ${err}`);
+      setErrorMessage(`Error: ${err}`);
     }
   };
 
@@ -91,19 +95,24 @@ const ChannelManager: React.FC = () => {
       await notifyAndRefresh();
     } catch (err) {
       console.error('Error regenerating color:', err);
-      alert(`Error: ${err}`);
+      setErrorMessage(`Error: ${err}`);
     }
   };
 
-  const handleDeleteGraph = async (graphIndex: number) => {
-    if (window.confirm('Are you sure you want to delete this graph?')) {
-      try {
-        await RemoveGraph(graphIndex);
-        await notifyAndRefresh();
-      } catch (err) {
-        console.error('Error deleting graph:', err);
-        alert(`Error: ${err}`);
-      }
+  const handleDeleteGraph = (graphIndex: number) => {
+    setDeleteConfirm({ graphIndex });
+  };
+
+  const confirmDeleteGraph = async () => {
+    if (!deleteConfirm) return;
+    try {
+      await RemoveGraph(deleteConfirm.graphIndex);
+      await notifyAndRefresh();
+    } catch (err) {
+      console.error('Error deleting graph:', err);
+      setErrorMessage(`Error: ${err}`);
+    } finally {
+      setDeleteConfirm(null);
     }
   };
 
@@ -341,6 +350,26 @@ const ChannelManager: React.FC = () => {
           {viewMode === 'channels' && renderChannelsView()}
           {viewMode === 'graphs' && renderGraphsView()}
         </>
+      )}
+
+      {deleteConfirm && (
+        <ConfirmDialog
+          title="Delete Graph"
+          message="Are you sure you want to delete this graph?"
+          confirmText="Delete"
+          cancelText="Cancel"
+          confirmColor="#ff4444"
+          onConfirm={confirmDeleteGraph}
+          onCancel={() => setDeleteConfirm(null)}
+        />
+      )}
+
+      {errorMessage && (
+        <PopUpDialog
+          message={errorMessage}
+          bgColor="#ff4444"
+          onClose={() => setErrorMessage(null)}
+        />
       )}
 
       <style>{`

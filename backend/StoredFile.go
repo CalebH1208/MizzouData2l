@@ -428,3 +428,47 @@ func (B *Basic_telemetry_file) List_all_stored_files() ([]string, error) {
 
 	return files, nil
 }
+
+func (B *Basic_telemetry_file) LoadMRTFForEditing() error {
+	if B.parser == nil {
+		return errors.New("telemetry file parser not initialized")
+	}
+
+	B.parser.Name = B.Name
+	B.parser.Tags = B.Tags
+	B.parser.Channels = []Telemetry_channel{}
+
+	for name, storedChannel := range B.Channels {
+		data := make([]float32, len(storedChannel.Data))
+		originalData := make([]float32, len(storedChannel.Data))
+
+		for i, val := range storedChannel.Data {
+			data[i] = float32(val)
+			originalData[i] = float32(val)
+		}
+
+		B.parser.Channels = append(B.parser.Channels, Telemetry_channel{
+			Name:         name,
+			Unit:         storedChannel.Unit,
+			Conversion:   float32(storedChannel.Conv),
+			OriginalConv: float32(storedChannel.Conv),
+			NegateData:   false,
+			is_Validated: true,
+			Data:         data,
+			OriginalData: originalData,
+		})
+	}
+
+	return nil
+}
+
+func (B *Basic_telemetry_file) GetMRTFPath(filename string) (string, error) {
+	exePath, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("failed to get executable path: %w", err)
+	}
+	exeDir := filepath.Dir(exePath)
+	cacheDir := filepath.Join(exeDir, "DATACACHE")
+
+	return filepath.Join(cacheDir, filename), nil
+}

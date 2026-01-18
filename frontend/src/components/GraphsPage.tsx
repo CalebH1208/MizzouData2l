@@ -1,12 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Read_BTF } from '../../wailsjs/go/backend/Basic_telemetry_file'
-import {InitializeFromStoredFile} from '../../wailsjs/go/Backend/Full_graph'
+import {
+  InitializeFromStoredFile,
+  GetAvailableChannels,
+  LoadGraphConfiguration,
+  ClearGraphState
+} from '../../wailsjs/go/Backend/Full_graph'
 import { ExtractFragmentsFromMarkers, GetAllFragments } from '../../wailsjs/go/Backend/Tool_manager'
 import { OpenFileDialog } from "../../wailsjs/go/main/App"
 import TuneGraph from './TuneGraph';
-import ChannelManager from './ChannelManager';
-import { LogPrint, EventsOn } from '../../wailsjs/runtime/runtime';
+import ChannelManagerUnified from './ChannelManagerUnified';
+import { LogPrint, EventsOn, EventsEmit } from '../../wailsjs/runtime/runtime';
+import * as PresetManager from '../utils/PresetManager';
 
 interface DataPoint {
   index: number;
@@ -28,6 +34,11 @@ const navigate = useNavigate();
 
 const [graphUpdateTrigger, setGraphUpdateTrigger] = useState(0);
 const [showChannelManager, setShowChannelManager] = useState(false);
+const [currentViewportStart, setCurrentViewportStart] = useState<number>(0);
+const [currentViewportEnd, setCurrentViewportEnd] = useState<number>(0);
+const [presets, setPresets] = useState<PresetManager.GraphPreset[]>([]);
+
+const globalViewportRef = useRef<{ start: number; end: number } | null>(null);
 
   const handleBack = () => {
     navigate('/');
@@ -60,6 +71,7 @@ const [showChannelManager, setShowChannelManager] = useState(false);
         await Read_BTF((pathElement as HTMLInputElement).value);
         await InitializeFromStoredFile();
 
+        // Increment trigger to remount TuneGraph with completely fresh data
         setGraphUpdateTrigger(prev => prev + 1);
       } catch(e) {
         LogPrint(`Error loading graph data: ${e}`)
@@ -84,17 +96,96 @@ const [showChannelManager, setShowChannelManager] = useState(false);
     }
 
   useEffect(() => {
+    const initializePage = async () => {
+      await ClearGraphState();
+      const loadedPresets = PresetManager.loadPresets();
+      setPresets(loadedPresets);
+    };
+    initializePage();
+  }, []);
+
+  useEffect(() => {
     // Listen for graph refresh events from ChannelManager
+    // Note: TuneGraph listens to this event directly, no need to remount it
     const unsubscribe = EventsOn('graph-refresh', () => {
       LogPrint('Graph refresh event received');
-      setGraphUpdateTrigger(prev => prev + 1);
+    });
+
+    // Listen for viewport updates from TuneGraph
+    const unsubscribeViewport = EventsOn('viewport-update', (data: any) => {
+      setCurrentViewportStart(data.start);
+      setCurrentViewportEnd(data.end);
+
+      // Save viewport globally to maintain zoom across preset changes
+      if (data.start !== 0 && data.end !== 0) {
+        globalViewportRef.current = { start: data.start, end: data.end };
+      }
     });
 
     // Cleanup function to unsubscribe when component unmounts
     return () => {
       if (unsubscribe) unsubscribe();
+      if (unsubscribeViewport) unsubscribeViewport();
     };
-  }, []); 
+  }, []);
+
+  const handleViewportRestore = (start: number, end: number) => {
+    EventsEmit('viewport-restore', { start, end });
+  };
+
+  const handlePresetsUpdate = () => {
+    const updated = PresetManager.loadPresets();
+    setPresets(updated);
+  };
+
+  useEffect(() => {
+    const handleKeyPress = async (e: KeyboardEvent) => {
+      if (showChannelManager) return;
+
+      const key = e.key;
+      if (key >= '1' && key <= '9') {
+        const presetIndex = parseInt(key) - 1;
+        const loadedPresets = PresetManager.loadPresets();
+
+        if (presetIndex < loadedPresets.length) {
+          const preset = loadedPresets[presetIndex];
+          LogPrint(`Loading preset ${presetIndex + 1}: ${preset.name}`);
+
+          try {
+            const channels = await GetAvailableChannels();
+            const availableChannelNames = channels.map(ch => ch.name);
+
+            const configs = preset.graphs.map(g => ({
+              title: g.title,
+              channelNames: g.channelNames.map(name =>
+                PresetManager.matchChannelName(name, availableChannelNames)
+              ).filter((name): name is string => name !== null),
+              useSplitAxis: g.useSplitAxis,
+            }));
+
+            if (globalViewportRef.current) {
+               handleViewportRestore(globalViewportRef.current.start, globalViewportRef.current.end);
+            }
+
+            await LoadGraphConfiguration(configs);
+
+            PresetManager.updateLastUsed(preset.id);
+
+            // Trigger graph refresh via event instead of remounting
+            EventsEmit('graph-refresh');
+          } catch (err) {
+            LogPrint(`Error loading preset: ${err}`);
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyPress);
+    };
+  }, [showChannelManager]);
 
   return (
     <div style={{
@@ -281,10 +372,12 @@ const [showChannelManager, setShowChannelManager] = useState(false);
         <div style={{
             flex: 1,
             display: 'flex',
+            flexDirection: 'column',
             minHeight: 0,
             padding: '20px',
             overflow: 'hidden',
-            boxSizing: 'border-box'
+            boxSizing: 'border-box',
+            gap: '10px'
         }}>
             <div style={{
                 flex: 1,
@@ -295,10 +388,62 @@ const [showChannelManager, setShowChannelManager] = useState(false);
                 display: 'flex',
                 flexDirection: 'column'
             }}>
-                <TuneGraph
-                    key={graphUpdateTrigger}
-                />
+                <TuneGraph key={graphUpdateTrigger} />
             </div>
+
+            {/* Preset Hotkey Hint - Horizontal Row */}
+            {!showChannelManager && presets.length > 0 && (
+              <div style={{
+                backgroundColor: '#1a1a1a',
+                border: '2px solid #F1B82D',
+                borderRadius: '8px',
+                padding: '10px 15px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '15px',
+                flexWrap: 'wrap',
+                flexShrink: 0,
+              }}>
+                <span style={{
+                  fontSize: '13px',
+                  fontWeight: 'bold',
+                  color: '#F1B82D',
+                  whiteSpace: 'nowrap'
+                }}>
+                  Preset Hotkeys:
+                </span>
+                {presets.slice(0, 9).map((preset, idx) => (
+                  <div key={preset.id} style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}>
+                    <span style={{
+                      backgroundColor: '#F1B82D',
+                      color: 'black',
+                      borderRadius: '4px',
+                      padding: '2px 6px',
+                      fontSize: '12px',
+                      fontWeight: 'bold',
+                      minWidth: '20px',
+                      textAlign: 'center'
+                    }}>
+                      {idx + 1}
+                    </span>
+                    <span style={{
+                      fontSize: '12px',
+                      color: '#cccccc',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      maxWidth: '150px'
+                    }}>
+                      {preset.name}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
         </div>
 
       {/* Channel Manager Modal Overlay */}
@@ -324,8 +469,8 @@ const [showChannelManager, setShowChannelManager] = useState(false);
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              width: '90%',
-              maxWidth: '800px',
+              width: '95%',
+              maxWidth: '1400px',
               height: '90%',
               maxHeight: '900px',
               backgroundColor: '#0a0a0a',
@@ -379,7 +524,13 @@ const [showChannelManager, setShowChannelManager] = useState(false);
               overflowX: 'hidden',
               minHeight: 0
             }}>
-              <ChannelManager key={graphUpdateTrigger} />
+              <ChannelManagerUnified
+                key={graphUpdateTrigger}
+                currentViewportStart={currentViewportStart}
+                currentViewportEnd={currentViewportEnd}
+                onViewportRestore={handleViewportRestore}
+                onPresetsUpdate={handlePresetsUpdate}
+              />
             </div>
           </div>
         </div>
