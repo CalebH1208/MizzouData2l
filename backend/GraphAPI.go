@@ -1,7 +1,6 @@
 package Backend
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,7 +11,6 @@ import (
 const MAX_POINTS_ON_SCREEN int = 25000
 
 type Full_graph struct {
-	ctx                 context.Context
 	stored_file_manager *Basic_telemetry_file
 	FullTimeStamps      []float64
 
@@ -24,8 +22,7 @@ type Full_graph struct {
 	ExportStartLines []float64
 	ExportEndLines   []float64
 
-	Graphs   []Solo_graph
-	LODLevel int
+	Graphs []Solo_graph
 
 	mutex sync.RWMutex
 }
@@ -136,10 +133,6 @@ func New_full_graph(SFM *Basic_telemetry_file) *Full_graph {
 		ExportEndLines:      make([]float64, 0),
 		Graphs:              make([]Solo_graph, 0),
 	}
-}
-
-func (fg *Full_graph) SetContext(ctx context.Context) {
-	fg.ctx = ctx
 }
 
 func (fg *Full_graph) ClearGraphState() error {
@@ -304,29 +297,6 @@ func (fg *Full_graph) buildAllLODLevelsFromStored(channel *Data_channel, rawData
 
 	// Assign the built LOD levels to the channel
 	channel.DataLines = lodLevels
-}
-
-// buildLODLevelFromStored is kept for backwards compatibility but is no longer used
-// in the main initialization path
-func (fg *Full_graph) buildLODLevelFromStored(rawData []float64, step int) *LOD_data_line {
-	fullSize := len(rawData)
-	lodSize := (fullSize + step - 1) / step
-
-	lod := &LOD_data_line{
-		Step:       step,
-		Timestamps: make([]float64, 0, lodSize),
-		IndexMap:   make([]int64, 0, lodSize),
-		Values:     make([]float64, 0, lodSize),
-	}
-
-	for i := 0; i < fullSize; i += step {
-		lod.Timestamps = append(lod.Timestamps, fg.FullTimeStamps[i])
-		lod.IndexMap = append(lod.IndexMap, int64(i))
-
-		lod.Values = append(lod.Values, rawData[i])
-	}
-
-	return lod
 }
 
 func (fg *Full_graph) calculateYRangeForEachGraph() error {
@@ -919,51 +889,6 @@ func (fg *Full_graph) removeEmptyGraphs() {
 	fg.Graphs = nonEmptyGraphs
 }
 
-func (fg *Full_graph) ConfigureGraphsFromLayout(configs []Graph_configuration) error {
-	fg.mutex.Lock()
-	defer fg.mutex.Unlock()
-
-	// Clear existing graphs
-	fg.Graphs = make([]Solo_graph, 0, len(configs))
-
-	// Reset all channel graph indices
-	for _, channel := range fg.ViewableChannels {
-		channel.GraphIndex = -1
-	}
-
-	// Create new graphs
-	for i, config := range configs {
-		// Validate all channels exist
-		for _, channelName := range config.ChannelNames {
-			if _, exists := fg.ViewableChannels[channelName]; !exists {
-				return fmt.Errorf("channel '%s' not found", channelName)
-			}
-		}
-
-		// Create graph
-		fg.Graphs = append(fg.Graphs, Solo_graph{
-			Index:         i,
-			Title:         config.Title,
-			YRange:        [2]float64{0, 0}, // Will be calculated
-			DataChannels:  config.ChannelNames,
-			UseSplitAxis:  false,
-			ChannelRanges: make(map[string][2]float64),
-		})
-
-		// Update channel graph indices
-		for _, channelName := range config.ChannelNames {
-			fg.ViewableChannels[channelName].GraphIndex = i
-		}
-	}
-
-	// Calculate Y ranges
-	if err := fg.calculateYRangeForEachGraph(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func (fg *Full_graph) LoadGraphConfiguration(configs []Graph_configuration) error {
 	fg.mutex.Lock()
 	defer fg.mutex.Unlock()
@@ -1317,13 +1242,6 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
-}
-
-func absDiff(a, b int64) int64 {
-	if a > b {
-		return a - b
-	}
-	return b - a
 }
 
 func absDiffFloat(a, b float64) float64 {

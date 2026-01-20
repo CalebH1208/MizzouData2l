@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"slices"
 	"strconv"
 )
 
@@ -30,7 +29,7 @@ type Telemetry_file struct {
 
 func CreateNewTelemetryFile() *Telemetry_file {
 	return &Telemetry_file{
-		Name:     "change my name num nuts",
+		Name:     "CHange my Name num nuts",
 		Tags:     []string{},
 		Channels: []Telemetry_channel{},
 	}
@@ -38,22 +37,6 @@ func CreateNewTelemetryFile() *Telemetry_file {
 
 func (file *Telemetry_file) SetName(newname string) {
 	file.Name = newname
-}
-
-func (file *Telemetry_file) AddTag(tag string) {
-	if slices.Contains(file.Tags, tag) {
-		return
-	}
-	file.Tags = append(file.Tags, tag)
-}
-
-func (file *Telemetry_file) RemoveTag(tag string) {
-	for i, t := range file.Tags {
-		if tag == t {
-			file.Tags = append(file.Tags[:i], file.Tags[i+1:]...)
-			return
-		}
-	}
 }
 
 func (file *Telemetry_file) Load_telemetry_file(path string) error {
@@ -131,15 +114,6 @@ func (file *Telemetry_file) Load_telemetry_file(path string) error {
 		copy(file.Channels[i].OriginalData, file.Channels[i].Data)
 	}
 	return nil
-}
-
-func (file *Telemetry_file) Baby_serialize() string {
-	allNames := "["
-	for _, n := range file.Channels {
-		allNames = allNames + "," + n.Name
-	}
-	allNames += "]"
-	return (file.Name + " | " + allNames)
 }
 
 func (file *Telemetry_file) GetData(name string) ([]float32, error) {
@@ -266,16 +240,6 @@ func (file *Telemetry_file) ResetDefaults(name string) error {
 
 			// Reset conversion to original value
 			file.Channels[i].Conversion = file.Channels[i].OriginalConv
-			return nil
-		}
-	}
-	return fmt.Errorf("missing channel name %s", name)
-}
-
-func (file *Telemetry_file) DeleteChannel(name string) error {
-	for i, channel := range file.Channels {
-		if channel.Name == name {
-			file.Channels = append(file.Channels[:i], file.Channels[i+1:]...)
 			return nil
 		}
 	}

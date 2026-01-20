@@ -1,13 +1,11 @@
 package Backend
 
 import (
-	"context"
 	"fmt"
 	"sync"
 )
 
 type Tool_manager struct {
-	ctx       context.Context
 	fullGraph *Full_graph
 	fragments map[string]*Data_fragment
 	mutex     sync.RWMutex
@@ -15,7 +13,6 @@ type Tool_manager struct {
 
 func New_tool_manager(fullGraph *Full_graph) *Tool_manager {
 	return &Tool_manager{
-		ctx:       context.Background(),
 		fullGraph: fullGraph,
 		fragments: make(map[string]*Data_fragment),
 	}
@@ -112,18 +109,6 @@ func (tm *Tool_manager) GetAllFragments() []*Data_fragment {
 	return fragments
 }
 
-func (tm *Tool_manager) DeleteFragment(fragmentID string) error {
-	tm.mutex.Lock()
-	defer tm.mutex.Unlock()
-
-	if _, exists := tm.fragments[fragmentID]; !exists {
-		return fmt.Errorf("fragment with ID '%s' not found", fragmentID)
-	}
-
-	delete(tm.fragments, fragmentID)
-	return nil
-}
-
 func (tm *Tool_manager) ClearAllFragments() {
 	tm.mutex.Lock()
 	defer tm.mutex.Unlock()
@@ -154,25 +139,6 @@ func (tm *Tool_manager) ExecuteTool(toolName, fragmentID string, params map[stri
 	return result, nil
 }
 
-func (tm *Tool_manager) GetFragmentCount() int {
-	tm.mutex.RLock()
-	defer tm.mutex.RUnlock()
-
-	count := len(tm.fragments)
-	if _, exists := tm.fragments["concatenated_all"]; exists {
-		count--
-	}
-	return count
-}
-
-func (tm *Tool_manager) HasConcatenatedFragment() bool {
-	tm.mutex.RLock()
-	defer tm.mutex.RUnlock()
-
-	_, exists := tm.fragments["concatenated_all"]
-	return exists
-}
-
 func (tm *Tool_manager) GetConcatenatedFragmentID() string {
 	tm.mutex.RLock()
 	defer tm.mutex.RUnlock()
@@ -183,19 +149,7 @@ func (tm *Tool_manager) GetConcatenatedFragmentID() string {
 	return ""
 }
 
-func (tm *Tool_manager) DeleteConcatenatedFragment() error {
-	tm.mutex.Lock()
-	defer tm.mutex.Unlock()
-
-	if _, exists := tm.fragments["concatenated_all"]; !exists {
-		return fmt.Errorf("concatenated fragment does not exist")
-	}
-
-	delete(tm.fragments, "concatenated_all")
-	return nil
-}
-
-type Fragment_metadata struct {
+type Fragment_metadata struct{
 	ID           string   `json:"id"`
 	Name         string   `json:"name"`
 	StartTime    float64  `json:"startTime"`

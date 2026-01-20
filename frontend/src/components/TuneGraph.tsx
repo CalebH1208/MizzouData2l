@@ -306,7 +306,6 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
     };
 
     const handleViewportRestore = (data: { start: number; end: number }) => {
-      console.log('Restoring viewport to:', data);
       // Store the pending viewport restore so it can be applied after metadata loads
       pendingViewportRestore.current = data;
       setViewportStart(data.start);

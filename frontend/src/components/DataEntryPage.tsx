@@ -150,7 +150,6 @@ const DataEntryPage: React.FC = () => {
         setShowPresetSuggestions(true);
       }
     } catch (err) {
-      console.log("error parsing data: " + err);
       LogPrint("Error parsing data: " + err);
       setPopupMessage("Error Parsing data, are you sure all the files exist in this directory?");
       setPopupBg("#ff0000ff");

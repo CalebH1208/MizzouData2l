@@ -40,7 +40,6 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
   const [invalidFields, setInvalidFields] = useState<Set<string>>(new Set());
   const [zoomStack, setZoomStack] = useState<ZoomState[]>([]);
   const [hoveredPoint, setHoveredPoint] = useState<ScatterPoint | null>(null);
-  const [mousePos, setMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const svgRef = useRef<SVGSVGElement>(null);
   const isDragging = useRef(false);

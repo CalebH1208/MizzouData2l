@@ -59,12 +59,6 @@ func New_BTF(fileParser *Telemetry_file) *Basic_telemetry_file {
 	}
 }
 
-func (B *Basic_telemetry_file) ClearBTF() {
-	B.Name = ""
-	B.Tags = nil
-	B.Channels = make(map[string]Stored_channel)
-}
-
 func (B *Basic_telemetry_file) LogFile_to_BTF() {
 	B.Name = B.parser.Name
 	B.Tags = B.parser.Tags
@@ -389,18 +383,6 @@ func (B *Basic_telemetry_file) Read_BTF(filepath string) error {
 	return nil
 }
 
-func (B *Basic_telemetry_file) Add_channel(name string, unit string, conv float64, data []float64) {
-
-	if _, ok := B.Channels[name]; ok {
-		return
-	}
-	B.Channels[name] = Stored_channel{
-		Unit: unit,
-		Conv: conv,
-		Data: data,
-	}
-}
-
 func (B *Basic_telemetry_file) List_all_stored_files() ([]string, error) {
 	exePath, err := os.Executable()
 	if err != nil {
@@ -460,15 +442,4 @@ func (B *Basic_telemetry_file) LoadMRTFForEditing() error {
 	}
 
 	return nil
-}
-
-func (B *Basic_telemetry_file) GetMRTFPath(filename string) (string, error) {
-	exePath, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("failed to get executable path: %w", err)
-	}
-	exeDir := filepath.Dir(exePath)
-	cacheDir := filepath.Join(exeDir, "DATACACHE")
-
-	return filepath.Join(cacheDir, filename), nil
 }
