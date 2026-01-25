@@ -383,6 +383,153 @@ func (B *Basic_telemetry_file) Read_BTF(filepath string) error {
 	return nil
 }
 
+func (B *Basic_telemetry_file) ReadMultiFileMetadata(filepath string) ([]File_metadata, error) {
+	f, err := os.Open(filepath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	fileInfo, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	magic := make([]byte, 4)
+	if _, err := io.ReadFull(f, magic); err != nil {
+		return nil, err
+	}
+	if string(magic) != "MRTF" {
+		return nil, errors.New("not an MRTF file")
+	}
+
+	offset := int64(fileInfo.Size() - 4)
+	if offset < 0 {
+		return nil, nil
+	}
+
+	if _, err := f.Seek(offset, 0); err != nil {
+		return nil, err
+	}
+
+	mfmdMagic := make([]byte, 4)
+	n, err := f.Read(mfmdMagic)
+	if err != nil || n != 4 {
+		return nil, nil
+	}
+
+	foundMFMD := false
+	for offset >= 0 {
+		if string(mfmdMagic) == "MFMD" {
+			foundMFMD = true
+			break
+		}
+
+		offset -= 1
+		if offset < 0 {
+			break
+		}
+
+		if _, err := f.Seek(offset, 0); err != nil {
+			return nil, nil
+		}
+
+		n, err := f.Read(mfmdMagic)
+		if err != nil || n != 4 {
+			return nil, nil
+		}
+	}
+
+	if !foundMFMD {
+		return nil, nil
+	}
+
+	if _, err := f.Seek(offset+4, 0); err != nil {
+		return nil, err
+	}
+
+	var fileCount uint32
+	if err := binary.Read(f, binary.LittleEndian, &fileCount); err != nil {
+		return nil, err
+	}
+
+	fileMetadata := make([]File_metadata, fileCount)
+	for i := uint32(0); i < fileCount; i++ {
+		id, err := readString(f)
+		if err != nil {
+			return nil, err
+		}
+		originalPath, err := readString(f)
+		if err != nil {
+			return nil, err
+		}
+		originalName, err := readString(f)
+		if err != nil {
+			return nil, err
+		}
+		displayName, err := readString(f)
+		if err != nil {
+			return nil, err
+		}
+
+		var originalStart, originalEnd, adjustedStart, adjustedEnd, timeOffset float64
+		if err := binary.Read(f, binary.LittleEndian, &originalStart); err != nil {
+			return nil, err
+		}
+		if err := binary.Read(f, binary.LittleEndian, &originalEnd); err != nil {
+			return nil, err
+		}
+		if err := binary.Read(f, binary.LittleEndian, &adjustedStart); err != nil {
+			return nil, err
+		}
+		if err := binary.Read(f, binary.LittleEndian, &adjustedEnd); err != nil {
+			return nil, err
+		}
+		if err := binary.Read(f, binary.LittleEndian, &timeOffset); err != nil {
+			return nil, err
+		}
+
+		var dataPointCount, channelCount, order uint32
+		if err := binary.Read(f, binary.LittleEndian, &dataPointCount); err != nil {
+			return nil, err
+		}
+		if err := binary.Read(f, binary.LittleEndian, &channelCount); err != nil {
+			return nil, err
+		}
+
+		channelNames := make([]string, channelCount)
+		for j := uint32(0); j < channelCount; j++ {
+			chName, err := readString(f)
+			if err != nil {
+				return nil, err
+			}
+			channelNames[j] = chName
+		}
+
+		if err := binary.Read(f, binary.LittleEndian, &order); err != nil {
+			return nil, err
+		}
+
+		fileMetadata[i] = File_metadata{
+			ID:             id,
+			OriginalPath:   originalPath,
+			OriginalName:   originalName,
+			DisplayName:    displayName,
+			OriginalStart:  originalStart,
+			OriginalEnd:    originalEnd,
+			AdjustedStart:  adjustedStart,
+			AdjustedEnd:    adjustedEnd,
+			TimeOffset:     timeOffset,
+			DataPointCount: int(dataPointCount),
+			ChannelNames:   channelNames,
+			Order:          int(order),
+		}
+	}
+
+	fmt.Printf("[ReadMultiFileMetadata] Read metadata for %d files\n", fileCount)
+	return fileMetadata, nil
+}
+
 func (B *Basic_telemetry_file) List_all_stored_files() ([]string, error) {
 	exePath, err := os.Executable()
 	if err != nil {

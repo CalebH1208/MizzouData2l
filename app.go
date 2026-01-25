@@ -64,6 +64,36 @@ func (a *App) OpenFileDialog() (string, error) {
 	return result, err
 }
 
+func (a *App) OpenMultipleFilesDialog() ([]string, error) {
+	exePath, err := os.Executable()
+	if err != nil {
+		exePath, _ = os.Getwd()
+	}
+	exeDir := filepath.Dir(exePath)
+	dataCacheDir := filepath.Join(exeDir, "DATACACHE")
+
+	options := runtime.OpenDialogOptions{
+		Title:            "Select Multiple MRTF Files",
+		DefaultDirectory: dataCacheDir,
+		CanCreateDirectories: false,
+		ResolvesAliases: true,
+		TreatPackagesAsDirectories: false,
+		Filters: []runtime.FileFilter{
+			{
+				DisplayName: "MRTF Files (*.mrtf)",
+				Pattern:     "*.mrtf",
+			},
+			{
+				DisplayName: "All Files (*.*)",
+				Pattern:     "*.*",
+			},
+		},
+	}
+
+	results, err := runtime.OpenMultipleFilesDialog(a.ctx, options)
+	return results, err
+}
+
 func (a *App) SaveFileDialog(defaultFilename string) (string, error) {
 	options := runtime.SaveDialogOptions{
 		Title:           "Export Scatter Plot",

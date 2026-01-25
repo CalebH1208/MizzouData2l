@@ -11,6 +11,7 @@ import { ExtractFragmentsFromMarkers, GetAllFragments } from '../../wailsjs/go/B
 import { OpenFileDialog } from "../../wailsjs/go/main/App"
 import TuneGraph from './TuneGraph';
 import ChannelManagerUnified from './ChannelManagerUnified';
+import MultiFileManager from './MultiFileManager';
 import { LogPrint, EventsOn, EventsEmit } from '../../wailsjs/runtime/runtime';
 import * as PresetManager from '../utils/PresetManager';
 
@@ -34,11 +35,13 @@ const navigate = useNavigate();
 
 const [graphUpdateTrigger, setGraphUpdateTrigger] = useState(0);
 const [showChannelManager, setShowChannelManager] = useState(false);
+const [showMultiFileManager, setShowMultiFileManager] = useState(false);
 const [currentViewportStart, setCurrentViewportStart] = useState<number>(0);
 const [currentViewportEnd, setCurrentViewportEnd] = useState<number>(0);
 const [presets, setPresets] = useState<PresetManager.GraphPreset[]>([]);
 
 const globalViewportRef = useRef<{ start: number; end: number } | null>(null);
+const hasLoadedDataRef = useRef(false);
 
   const handleBack = () => {
     navigate('/');
@@ -71,6 +74,7 @@ const globalViewportRef = useRef<{ start: number; end: number } | null>(null);
         await Read_BTF((pathElement as HTMLInputElement).value);
         await InitializeFromStoredFile();
 
+        hasLoadedDataRef.current = true;
         // Increment trigger to remount TuneGraph with completely fresh data
         setGraphUpdateTrigger(prev => prev + 1);
       } catch(e) {
@@ -97,7 +101,9 @@ const globalViewportRef = useRef<{ start: number; end: number } | null>(null);
 
   useEffect(() => {
     const initializePage = async () => {
-      await ClearGraphState();
+      if (!hasLoadedDataRef.current) {
+        await ClearGraphState();
+      }
       const loadedPresets = PresetManager.loadPresets();
       setPresets(loadedPresets);
     };
@@ -109,6 +115,13 @@ const globalViewportRef = useRef<{ start: number; end: number } | null>(null);
     // Note: TuneGraph listens to this event directly, no need to remount it
     const unsubscribe = EventsOn('graph-refresh', () => {
       LogPrint('Graph refresh event received');
+    });
+
+    // Listen for multi-file data loaded event
+    const unsubscribeMultiFile = EventsOn('multi-file-loaded', () => {
+      LogPrint('Multi-file data loaded, updating graph state');
+      hasLoadedDataRef.current = true;
+      setGraphUpdateTrigger(prev => prev + 1);
     });
 
     // Listen for viewport updates from TuneGraph
@@ -125,6 +138,7 @@ const globalViewportRef = useRef<{ start: number; end: number } | null>(null);
     // Cleanup function to unsubscribe when component unmounts
     return () => {
       if (unsubscribe) unsubscribe();
+      if (unsubscribeMultiFile) unsubscribeMultiFile();
       if (unsubscribeViewport) unsubscribeViewport();
     };
   }, []);
@@ -161,6 +175,7 @@ const globalViewportRef = useRef<{ start: number; end: number } | null>(null);
                 PresetManager.matchChannelName(name, availableChannelNames)
               ).filter((name): name is string => name !== null),
               useSplitAxis: g.useSplitAxis,
+              channelColors: g.channelColors || {},
             }));
 
             if (globalViewportRef.current) {
@@ -338,6 +353,33 @@ const globalViewportRef = useRef<{ start: number; end: number } | null>(null);
           }}
         >
           Channel Manager
+        </button>
+
+        <button
+          onClick={() => setShowMultiFileManager(true)}
+          style={{
+            backgroundColor: '#0099FF',
+            color: 'white',
+            border: '2px solid #0099FF',
+            borderRadius: '6px',
+            padding: '6px 12px',
+            fontSize: '13px',
+            fontWeight: 'bold',
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+            flexShrink: 0,
+            whiteSpace: 'nowrap'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = '#ffffff';
+            e.currentTarget.style.color = '#0099FF';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = '#0099FF';
+            e.currentTarget.style.color = 'white';
+          }}
+        >
+          Multi-File Manager
         </button>
 
         <button
@@ -535,6 +577,12 @@ const globalViewportRef = useRef<{ start: number; end: number } | null>(null);
           </div>
         </div>
       )}
+
+      {/* Multi-File Manager Modal */}
+      <MultiFileManager
+        isOpen={showMultiFileManager}
+        onClose={() => setShowMultiFileManager(false)}
+      />
 
     </div>
   );

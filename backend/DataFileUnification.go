@@ -83,6 +83,20 @@ func detectHeaderFormat(filePath string) (bool, string, error) {
 
 	headerLine := lines[0]
 
+	// Check if line 2 is a duplicate of line 1
+	if len(lines[1]) == len(headerLine) {
+		isDuplicate := true
+		for i := range headerLine {
+			if lines[1][i] != headerLine[i] {
+				isDuplicate = false
+				break
+			}
+		}
+		if isDuplicate {
+			return false, strings.Join(headerLine, ","), nil
+		}
+	}
+
 	// Try to parse second line as numeric data
 	_, err = strconv.ParseInt(lines[1][0], 10, 64)
 	if err == nil {
@@ -132,6 +146,19 @@ func cleanCSVData(filePath string) (*cleanedData, error) {
 	headerCols := strings.Split(headerLine, ",")
 	expectedColumns := len(headerCols)
 
+	// Check if line 2 is a duplicate header (for simple header files)
+	hasDuplicateHeader := false
+	if !hasExtended && len(allLines) >= 2 && len(allLines[1]) == len(allLines[0]) {
+		isDuplicate := true
+		for i := range allLines[0] {
+			if allLines[1][i] != allLines[0][i] {
+				isDuplicate = false
+				break
+			}
+		}
+		hasDuplicateHeader = isDuplicate
+	}
+
 	// Create standardized 4-line header
 	result := &cleanedData{
 		header: headerInfo{
@@ -162,6 +189,9 @@ func cleanCSVData(filePath string) (*cleanedData, error) {
 	var timeOffset int64 = 0
 
 	i := headerLinesCount
+	if hasDuplicateHeader {
+		i++
+	}
 	for i < len(allLines) {
 		line := allLines[i]
 

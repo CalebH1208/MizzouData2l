@@ -282,6 +282,7 @@ const ChannelManagerUnified: React.FC<ChannelManagerUnifiedProps> = ({
           PresetManager.matchChannelName(name, availableChannelNames)
         ).filter((name): name is string => name !== null),
         useSplitAxis: g.useSplitAxis,
+        channelColors: g.channelColors || {},
       }));
 
       await LoadGraphConfiguration(configs);

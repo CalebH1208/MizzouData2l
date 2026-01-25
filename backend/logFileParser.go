@@ -253,6 +253,9 @@ func (file *Telemetry_file) EnforceRange(name string, min float32, max float32) 
 
 	for i, channel := range file.Channels {
 		if channel.Name == name {
+			if len(file.Channels[i].Data) == 0 {
+				return fmt.Errorf("channel %s has no data", name)
+			}
 			if file.Channels[i].Data[0] < min {
 				file.Channels[i].Data[0] = min
 			} else if file.Channels[i].Data[0] > max {

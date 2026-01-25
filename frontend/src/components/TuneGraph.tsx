@@ -336,6 +336,32 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       .domain([viewportData.viewportStart, viewportData.viewportEnd])
       .range([0, chartWidth]);
 
+    // Draw alternating background shading for multi-file datasets
+    if (viewportData.fileMetadataList && viewportData.fileMetadataList.length > 0) {
+      viewportData.fileMetadataList.forEach((file, fileIdx) => {
+        const fileStart = file.adjustedStart;
+        const fileEnd = file.adjustedEnd;
+
+        // Only draw if this file overlaps with the viewport
+        if (fileEnd >= viewportData.viewportStart && fileStart <= viewportData.viewportEnd) {
+          const visibleStart = Math.max(fileStart, viewportData.viewportStart);
+          const visibleEnd = Math.min(fileEnd, viewportData.viewportEnd);
+
+          // Use file index to determine color - consistent regardless of zoom
+          const isEven = fileIdx % 2 === 0;
+
+          svg.append('rect')
+            .attr('x', margin.left + xScale(visibleStart))
+            .attr('y', margin.top)
+            .attr('width', xScale(visibleEnd) - xScale(visibleStart))
+            .attr('height', chartHeight)
+            .attr('fill', isEven ? '#2a2a2a' : '#0a0a0a')
+            .attr('opacity', 0.6)
+            .attr('pointer-events', 'none');
+        }
+      });
+    }
+
     // Draw each graph
     viewportData.graphs.forEach((graph, graphIndex) => {
       const yOffset = margin.top + graphIndex * graphHeight;
@@ -567,6 +593,54 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       });
     }
 
+    // Draw file boundary dividers (red vertical lines)
+    if (viewportData.fileBoundaryIndices && viewportData.fileBoundaryIndices.length > 0) {
+      viewportData.fileBoundaryIndices.forEach((idx) => {
+        const time = viewportData.timestamps[idx];
+        const x = margin.left + xScale(time);
+
+        svg.append('line')
+          .attr('x1', x)
+          .attr('x2', x)
+          .attr('y1', margin.top)
+          .attr('y2', height - margin.bottom)
+          .attr('stroke', '#FF0000')
+          .attr('stroke-width', 2)
+          .attr('opacity', 0.8)
+          .attr('pointer-events', 'none');
+      });
+    }
+
+    // Draw file labels centered in each section
+    if (viewportData.fileMetadataList && viewportData.fileMetadataList.length > 0) {
+      viewportData.fileMetadataList.forEach((file, fileIdx) => {
+        const fileStart = file.adjustedStart;
+        const fileEnd = file.adjustedEnd;
+
+        // Only draw label if this file overlaps with the viewport
+        if (fileEnd >= viewportData.viewportStart && fileStart <= viewportData.viewportEnd) {
+          const visibleStart = Math.max(fileStart, viewportData.viewportStart);
+          const visibleEnd = Math.min(fileEnd, viewportData.viewportEnd);
+          const sectionCenter = (visibleStart + visibleEnd) / 2;
+          const centerX = margin.left + xScale(sectionCenter);
+
+          // Only draw label if the visible section is reasonably wide (more than 50 pixels)
+          const sectionWidth = xScale(visibleEnd) - xScale(visibleStart);
+          if (sectionWidth > 50) {
+            svg.append('text')
+              .attr('x', centerX)
+              .attr('y', margin.top + 15)
+              .attr('text-anchor', 'middle')
+              .attr('fill', '#FF0000')
+              .attr('font-size', '12px')
+              .attr('font-weight', 'bold')
+              .text(`File ${fileIdx + 1}: ${file.displayName}`)
+              .style('pointer-events', 'none');
+          }
+        }
+      });
+    }
+
     // X axis (at bottom)
     svg.append('g')
       .attr('transform', `translate(${margin.left}, ${height - margin.bottom})`)
@@ -641,27 +715,23 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
     let newStart = pivot - (pivot - viewportStart) * zoomFactor;
     let newEnd = pivot + (viewportEnd - pivot) * zoomFactor;
 
-    // Clamp to total dataset range while trying to maintain pivot position
+    // Clamp to total dataset range while maintaining pivot position
     const minTime = metadata.timeRange[0];
     const maxTime = metadata.timeRange[1];
 
     if (newStart < minTime) {
-      // Hit left boundary - adjust to keep pivot ratio if possible
       newStart = minTime;
-      const desiredRange = (newEnd - newStart);
-      if (pivot - newStart < desiredRange * pivotRatio) {
-        // Can't maintain exact pivot ratio, adjust end
-        newEnd = Math.min(maxTime, newStart + desiredRange);
+      newEnd = pivot + (pivot - minTime) / pivotRatio * (1 - pivotRatio);
+      if (newEnd > maxTime) {
+        newEnd = maxTime;
       }
     }
 
     if (newEnd > maxTime) {
-      // Hit right boundary - adjust to keep pivot ratio if possible
       newEnd = maxTime;
-      const desiredRange = (newEnd - newStart);
-      if (newEnd - pivot < desiredRange * (1 - pivotRatio)) {
-        // Can't maintain exact pivot ratio, adjust start
-        newStart = Math.max(minTime, newEnd - desiredRange);
+      newStart = pivot - (maxTime - pivot) / (1 - pivotRatio) * pivotRatio;
+      if (newStart < minTime) {
+        newStart = minTime;
       }
     }
 
@@ -795,8 +865,13 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       }
       const snapped = Number(ts[idx]);
 
+      const menuWidth = 200 + 16 + 4;
+      const menuX = e.clientX + menuWidth > window.innerWidth
+        ? window.innerWidth - menuWidth
+        : e.clientX;
+
       setContextMenu({
-        x: e.clientX,
+        x: menuX,
         y: e.clientY,
         time: snapped
       });

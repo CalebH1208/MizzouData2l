@@ -2,13 +2,29 @@ package Backend
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 )
 
-const MAX_POINTS_ON_SCREEN int = 25000
+const MAX_POINTS_ON_SCREEN int = 15000
+
+type File_metadata struct {
+	ID              string   `json:"id"`
+	OriginalPath    string   `json:"originalPath"`
+	OriginalName    string   `json:"originalName"`
+	DisplayName     string   `json:"displayName"`
+	OriginalStart   float64  `json:"originalStart"`
+	OriginalEnd     float64  `json:"originalEnd"`
+	AdjustedStart   float64  `json:"adjustedStart"`
+	AdjustedEnd     float64  `json:"adjustedEnd"`
+	TimeOffset      float64  `json:"timeOffset"`
+	DataPointCount  int      `json:"dataPointCount"`
+	ChannelNames    []string `json:"channelNames"`
+	Order           int      `json:"order"`
+}
 
 type Full_graph struct {
 	stored_file_manager *Basic_telemetry_file
@@ -16,6 +32,10 @@ type Full_graph struct {
 
 	// maps a string to its data and all of the corresponding LOD levels
 	ViewableChannels map[string]*Data_channel
+
+	IsMultiFile    bool
+	FileMetadata   []File_metadata
+	FileBoundaries []float64
 
 	CursorPos        float64
 	BreakLines       []float64
@@ -59,6 +79,12 @@ type Viewport_request struct {
 	//MaxPoints int    `json:"maxPoints"` //dont think I need this but will leave it here
 }
 
+type File_boundary_label struct {
+	TimestampIndex int    `json:"timestampIndex"`
+	FileName       string `json:"fileName"`
+	Order          int    `json:"order"`
+}
+
 type Viewport_response struct {
 	Timestamps      []float64 `json:"timestamps"`
 	OriginalIndices []int64   `json:"originalIndices"`
@@ -68,6 +94,10 @@ type Viewport_response struct {
 	BreakIndices []int `json:"breakIndices"`
 	ExportStarts []int `json:"exportStarts"`
 	ExportEnds   []int `json:"exportEnds"`
+
+	FileBoundaryIndices []int                  `json:"fileBoundaryIndices"`
+	FileBoundaryLabels  []File_boundary_label `json:"fileBoundaryLabels"`
+	FileMetadataList    []File_metadata        `json:"fileMetadataList"`
 
 	LODStep       int     `json:"lodStep"`
 	TotalPoints   int     `json:"totalPoints"`
@@ -119,15 +149,19 @@ type Channel_info struct {
 }
 
 type Graph_configuration struct {
-	Title        string   `json:"title"`
-	ChannelNames []string `json:"channelNames"`
-	UseSplitAxis bool     `json:"useSplitAxis"`
+	Title         string            `json:"title"`
+	ChannelNames  []string          `json:"channelNames"`
+	UseSplitAxis  bool              `json:"useSplitAxis"`
+	ChannelColors map[string]string `json:"channelColors"`
 }
 
 func New_full_graph(SFM *Basic_telemetry_file) *Full_graph {
 	return &Full_graph{
 		stored_file_manager: SFM,
 		ViewableChannels:    make(map[string]*Data_channel),
+		IsMultiFile:         false,
+		FileMetadata:        make([]File_metadata, 0),
+		FileBoundaries:      make([]float64, 0),
 		BreakLines:          make([]float64, 0),
 		ExportStartLines:    make([]float64, 0),
 		ExportEndLines:      make([]float64, 0),
@@ -146,6 +180,9 @@ func (fg *Full_graph) ClearGraphState() error {
 	fg.CursorPos = 0
 	fg.ViewableChannels = make(map[string]*Data_channel)
 	fg.FullTimeStamps = make([]float64, 0)
+	fg.IsMultiFile = false
+	fg.FileMetadata = make([]File_metadata, 0)
+	fg.FileBoundaries = make([]float64, 0)
 
 	return nil
 }
@@ -245,7 +282,7 @@ func (fg *Full_graph) InitializeFromStoredFile() error {
 }
 
 func (fg *Full_graph) calculateMaxLODStep(channel_length int, number_of_channels int) int {
-	const maxTotalPoints = 25000
+	const maxTotalPoints = MAX_POINTS_ON_SCREEN
 
 	maxLODStep := 1
 
@@ -284,13 +321,18 @@ func (fg *Full_graph) buildAllLODLevelsFromStored(channel *Data_channel, rawData
 
 	// Single pass through the data, distribute to appropriate LOD levels
 	for i := 0; i < fullSize; i++ {
+		val := rawData[i]
+		if math.IsNaN(val) || math.IsInf(val, 0) {
+			continue
+		}
+
 		// Check which LOD levels should include this point using modulo
 		for step := 1; step <= maxLODStep; step *= 2 {
 			if i%step == 0 {
 				lod := lodLevels[step]
 				lod.Timestamps = append(lod.Timestamps, fg.FullTimeStamps[i])
 				lod.IndexMap = append(lod.IndexMap, int64(i))
-				lod.Values = append(lod.Values, rawData[i])
+				lod.Values = append(lod.Values, val)
 			}
 		}
 	}
@@ -305,10 +347,13 @@ func (fg *Full_graph) calculateYRangeForEachGraph() error {
 	}
 	for i, graph := range fg.Graphs {
 		// Always calculate unified range (used when UseSplitAxis is false)
-		minVal := fg.ViewableChannels[fg.Graphs[i].DataChannels[0]].DataLines[1].Values[0]
-		maxVal := minVal
+		minVal := math.Inf(1)
+		maxVal := math.Inf(-1)
 		for _, channelName := range graph.DataChannels {
 			for _, val := range fg.ViewableChannels[channelName].DataLines[1].Values {
+				if math.IsNaN(val) || math.IsInf(val, 0) {
+					continue
+				}
 				if val < minVal {
 					minVal = val
 				}
@@ -318,9 +363,14 @@ func (fg *Full_graph) calculateYRangeForEachGraph() error {
 			}
 		}
 
+		if math.IsInf(minVal, 0) || math.IsInf(maxVal, 0) {
+			minVal = 0
+			maxVal = 1
+		}
+
 		padding := (maxVal - minVal) * 0.1
-		if padding == 0 {
-			padding = 1 // Avoid zero range
+		if padding == 0 || math.IsNaN(padding) {
+			padding = 1
 		}
 
 		fg.Graphs[i].YRange = [2]float64{minVal - padding, maxVal + padding}
@@ -335,9 +385,12 @@ func (fg *Full_graph) calculateYRangeForEachGraph() error {
 				continue
 			}
 
-			chMin := channelData[0]
-			chMax := channelData[0]
+			chMin := math.Inf(1)
+			chMax := math.Inf(-1)
 			for _, val := range channelData {
+				if math.IsNaN(val) || math.IsInf(val, 0) {
+					continue
+				}
 				if val < chMin {
 					chMin = val
 				}
@@ -346,8 +399,13 @@ func (fg *Full_graph) calculateYRangeForEachGraph() error {
 				}
 			}
 
+			if math.IsInf(chMin, 0) || math.IsInf(chMax, 0) {
+				chMin = 0
+				chMax = 1
+			}
+
 			chPadding := (chMax - chMin) * 0.1
-			if chPadding == 0 {
+			if chPadding == 0 || math.IsNaN(chPadding) {
 				chPadding = 1
 			}
 
@@ -509,6 +567,34 @@ func (fg *Full_graph) GetViewportData(req Viewport_request) (*Viewport_response,
 		fg.ExportStartLines, referenceLOD, startIdx, endIdx)
 	response.ExportEnds = fg.filterMarkersToViewport(
 		fg.ExportEndLines, referenceLOD, startIdx, endIdx)
+
+	if fg.IsMultiFile && len(fg.FileBoundaries) > 0 {
+		response.FileBoundaryIndices = make([]int, 0)
+		response.FileBoundaryLabels = make([]File_boundary_label, 0)
+
+		viewportStartTime := referenceLOD.Timestamps[startIdx]
+		viewportEndTime := referenceLOD.Timestamps[endIdx-1]
+
+		for boundaryIdx, boundaryTime := range fg.FileBoundaries {
+			if boundaryTime >= viewportStartTime && boundaryTime <= viewportEndTime {
+				relativeIdx := fg.findTimeIndex(
+					referenceLOD.Timestamps[startIdx:endIdx],
+					boundaryTime,
+				)
+
+				response.FileBoundaryIndices = append(response.FileBoundaryIndices, relativeIdx)
+
+				response.FileBoundaryLabels = append(response.FileBoundaryLabels, File_boundary_label{
+					TimestampIndex: relativeIdx,
+					FileName:       fg.FileMetadata[boundaryIdx+1].DisplayName,
+					Order:          boundaryIdx + 1,
+				})
+			}
+		}
+
+		// Include full file metadata list for frontend rendering
+		response.FileMetadataList = fg.FileMetadata
+	}
 
 	return response, nil
 
@@ -923,6 +1009,11 @@ func (fg *Full_graph) LoadGraphConfiguration(configs []Graph_configuration) erro
 
 		for _, channelName := range validChannels {
 			fg.ViewableChannels[channelName].GraphIndex = graphIdx
+			if config.ChannelColors != nil {
+				if color, ok := config.ChannelColors[channelName]; ok {
+					fg.ViewableChannels[channelName].Color = color
+				}
+			}
 		}
 	}
 
@@ -1377,9 +1468,14 @@ func (fg *Full_graph) LoadPreviewChannel(telemetryFile *Telemetry_file, channelN
 		}
 
 		for i := 0; i < dataLength; i += lodStep {
+			val := float64(targetChannel.Data[i])
+			if math.IsNaN(val) || math.IsInf(val, 0) {
+				fmt.Printf("[Preview] Warning: Skipping NaN/Inf value at index %d\n", i)
+				continue
+			}
 			lodLine.Timestamps = append(lodLine.Timestamps, fg.FullTimeStamps[i])
 			lodLine.IndexMap = append(lodLine.IndexMap, int64(i))
-			lodLine.Values = append(lodLine.Values, float64(targetChannel.Data[i]))
+			lodLine.Values = append(lodLine.Values, val)
 		}
 
 		dataChannel.DataLines[lodStep] = lodLine
@@ -1395,9 +1491,16 @@ func (fg *Full_graph) LoadPreviewChannel(telemetryFile *Telemetry_file, channelN
 	fg.ViewableChannels[channelName] = dataChannel
 
 	// Calculate Y range for the channel
-	yMin := dataChannel.DataLines[1].Values[0]
-	yMax := yMin
+	if len(dataChannel.DataLines[1].Values) == 0 {
+		return fmt.Errorf("no valid data points after filtering NaN/Inf values")
+	}
+
+	yMin := math.Inf(1)
+	yMax := math.Inf(-1)
 	for _, val := range dataChannel.DataLines[1].Values {
+		if math.IsNaN(val) || math.IsInf(val, 0) {
+			continue
+		}
 		if val < yMin {
 			yMin = val
 		}
@@ -1406,9 +1509,13 @@ func (fg *Full_graph) LoadPreviewChannel(telemetryFile *Telemetry_file, channelN
 		}
 	}
 
+	if math.IsInf(yMin, 0) || math.IsInf(yMax, 0) {
+		return fmt.Errorf("all data values are NaN or Inf")
+	}
+
 	padding := (yMax - yMin) * 0.1
-	if padding == 0 {
-		padding = 1 // Avoid zero range
+	if padding == 0 || math.IsNaN(padding) {
+		padding = 1
 	}
 
 	// Create a single graph with this channel
