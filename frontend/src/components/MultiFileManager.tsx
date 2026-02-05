@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { InitializeFromMultipleFiles, GetFileBoundaries, GetMultiFileStatus, ReorderFiles, RemoveFileFromSequence, SaveConcatenatedFile, LoadMultiFileMRTF } from '../../wailsjs/go/Backend/Full_graph';
+import { InitializeFromMultipleFiles, GetFileBoundaries, GetMultiFileStatus, ReorderFiles, RemoveFileFromSequence, SaveConcatenatedFile, LoadMultiFileMRTF, CheckMRTFFileExists } from '../../wailsjs/go/Backend/Full_graph';
 import { OpenMultipleFilesDialog, OpenFileDialog } from '../../wailsjs/go/main/App';
 import { Backend } from '../../wailsjs/go/models';
 import { EventsEmit } from '../../wailsjs/runtime/runtime';
+import AlertModal from './AlertModal';
+import ConfirmModal from './ConfirmModal';
+import PromptModal from './PromptModal';
 
 interface MultiFileManagerProps {
   isOpen: boolean;
@@ -15,6 +18,34 @@ const MultiFileManager: React.FC<MultiFileManagerProps> = ({ isOpen, onClose }) 
   const [isMultiFile, setIsMultiFile] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+
+  const [alertModal, setAlertModal] = useState<{ isOpen: boolean; title: string; message: string }>({
+    isOpen: false,
+    title: '',
+    message: ''
+  });
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {}
+  });
+  const [promptModal, setPromptModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: (value: string) => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {}
+  });
 
   useEffect(() => {
     if (isOpen) {
@@ -68,7 +99,11 @@ const MultiFileManager: React.FC<MultiFileManagerProps> = ({ isOpen, onClose }) 
       EventsEmit('graph-refresh');
     } catch (err) {
       console.error('Error loading multiple files:', err);
-      alert(`Failed to load files: ${err}`);
+      setAlertModal({
+        isOpen: true,
+        title: 'Error',
+        message: `Failed to load files: ${err}`
+      });
     } finally {
       setLoading(false);
     }
@@ -111,7 +146,11 @@ const MultiFileManager: React.FC<MultiFileManagerProps> = ({ isOpen, onClose }) 
       EventsEmit('graph-refresh');
     } catch (err) {
       console.error('Error reordering files:', err);
-      alert(`Failed to reorder files: ${err}`);
+      setAlertModal({
+        isOpen: true,
+        title: 'Error',
+        message: `Failed to reorder files: ${err}`
+      });
     } finally {
       setDraggedIndex(null);
       setLoading(false);
@@ -119,47 +158,97 @@ const MultiFileManager: React.FC<MultiFileManagerProps> = ({ isOpen, onClose }) 
   };
 
   const handleRemoveFile = async (fileId: string) => {
-    if (!confirm('Are you sure you want to remove this file from the sequence?')) {
-      return;
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: 'Confirm Removal',
+      message: 'Are you sure you want to remove this file from the sequence?',
+      onConfirm: async () => {
+        setConfirmModal({ ...confirmModal, isOpen: false });
+        try {
+          setLoading(true);
+          console.log('[MultiFileManager] Removing file:', fileId);
 
-    try {
-      setLoading(true);
-      console.log('[MultiFileManager] Removing file:', fileId);
+          await RemoveFileFromSequence(fileId);
 
-      await RemoveFileFromSequence(fileId);
+          const updatedMetadata = await GetFileBoundaries();
+          setFiles(updatedMetadata);
 
-      const updatedMetadata = await GetFileBoundaries();
-      setFiles(updatedMetadata);
-
-      EventsEmit('graph-refresh');
-    } catch (err) {
-      console.error('Error removing file:', err);
-      alert(`Failed to remove file: ${err}`);
-    } finally {
-      setLoading(false);
-    }
+          EventsEmit('graph-refresh');
+        } catch (err) {
+          console.error('Error removing file:', err);
+          setAlertModal({
+            isOpen: true,
+            title: 'Error',
+            message: `Failed to remove file: ${err}`
+          });
+        } finally {
+          setLoading(false);
+        }
+      }
+    });
   };
 
-  const handleSaveMerged = async () => {
-    const fileName = prompt('Enter name for merged file (without extension):');
-    if (!fileName) {
-      return;
-    }
-
+  const performSave = async (fileName: string) => {
     try {
       setLoading(true);
       console.log('[MultiFileManager] Saving merged file as:', fileName);
 
       await SaveConcatenatedFile(fileName);
 
-      alert(`Successfully saved multi-file dataset as ${fileName}.MRTF`);
+      setAlertModal({
+        isOpen: true,
+        title: 'Success',
+        message: `Successfully saved multi-file dataset as ${fileName}.MRTF`
+      });
     } catch (err) {
       console.error('Error saving merged file:', err);
-      alert(`Failed to save merged file: ${err}`);
+      setAlertModal({
+        isOpen: true,
+        title: 'Error',
+        message: `Failed to save merged file: ${err}`
+      });
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSaveMerged = async () => {
+    setPromptModal({
+      isOpen: true,
+      title: 'Save Merged File',
+      message: 'Enter name for merged file (without extension):',
+      onConfirm: async (fileName: string) => {
+        setPromptModal({ ...promptModal, isOpen: false });
+        if (!fileName || !fileName.trim()) {
+          return;
+        }
+
+        try {
+          const fileExists = await CheckMRTFFileExists(fileName);
+
+          if (fileExists) {
+            setConfirmModal({
+              isOpen: true,
+              title: 'Overwrite File?',
+              message: `A file named "${fileName}.MRTF" already exists. Do you want to overwrite it?`,
+              onConfirm: async () => {
+                setConfirmModal({ ...confirmModal, isOpen: false });
+                await performSave(fileName);
+              }
+            });
+          } else {
+            await performSave(fileName);
+          }
+        } catch (err) {
+          console.error('Error checking file existence:', err);
+          setAlertModal({
+            isOpen: true,
+            title: 'Error',
+            message: `Failed to check if file exists: ${err}`
+          });
+        }
+      }
+    });
   };
 
   const handleLoadSavedMultiFile = async () => {
@@ -182,10 +271,18 @@ const MultiFileManager: React.FC<MultiFileManagerProps> = ({ isOpen, onClose }) 
       setWarnings([]);
 
       EventsEmit('graph-refresh');
-      alert('Successfully loaded multi-file dataset');
+      setAlertModal({
+        isOpen: true,
+        title: 'Success',
+        message: 'Successfully loaded multi-file dataset'
+      });
     } catch (err) {
       console.error('Error loading saved multi-file:', err);
-      alert(`Failed to load multi-file MRTF: ${err}`);
+      setAlertModal({
+        isOpen: true,
+        title: 'Error',
+        message: `Failed to load multi-file MRTF: ${err}`
+      });
     } finally {
       setLoading(false);
     }
@@ -546,6 +643,30 @@ const MultiFileManager: React.FC<MultiFileManagerProps> = ({ isOpen, onClose }) 
           )}
         </div>
       </div>
+
+      <AlertModal
+        isOpen={alertModal.isOpen}
+        title={alertModal.title}
+        message={alertModal.message}
+        onClose={() => setAlertModal({ ...alertModal, isOpen: false })}
+      />
+
+      <ConfirmModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        onConfirm={confirmModal.onConfirm}
+        onCancel={() => setConfirmModal({ ...confirmModal, isOpen: false })}
+      />
+
+      <PromptModal
+        isOpen={promptModal.isOpen}
+        title={promptModal.title}
+        message={promptModal.message}
+        placeholder="filename"
+        onConfirm={promptModal.onConfirm}
+        onCancel={() => setPromptModal({ ...promptModal, isOpen: false })}
+      />
     </div>
   );
 };

@@ -95,6 +95,15 @@ func (tm *Tool_manager) GetFragment(fragmentID string) (*Data_fragment, error) {
 		return nil, fmt.Errorf("fragment with ID '%s' not found", fragmentID)
 	}
 
+	fmt.Printf("[Tool_manager] GetFragment: ID=%s, TimeStamps=%d, Channels=%d\n",
+		fragment.ID, len(fragment.TimeStamps), len(fragment.Channels))
+
+	// Log first channel data count
+	for name, ch := range fragment.Channels {
+		fmt.Printf("[Tool_manager]   Channel '%s': %d values\n", name, len(ch.Values))
+		break
+	}
+
 	return fragment, nil
 }
 

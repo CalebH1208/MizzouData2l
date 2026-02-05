@@ -4,8 +4,7 @@ import { Read_BTF } from '../../wailsjs/go/backend/Basic_telemetry_file'
 import {
   InitializeFromStoredFile,
   GetAvailableChannels,
-  LoadGraphConfiguration,
-  ClearGraphState
+  LoadGraphConfiguration
 } from '../../wailsjs/go/Backend/Full_graph'
 import { ExtractFragmentsFromMarkers, GetAllFragments } from '../../wailsjs/go/Backend/Tool_manager'
 import { OpenFileDialog } from "../../wailsjs/go/main/App"
@@ -41,7 +40,6 @@ const [currentViewportEnd, setCurrentViewportEnd] = useState<number>(0);
 const [presets, setPresets] = useState<PresetManager.GraphPreset[]>([]);
 
 const globalViewportRef = useRef<{ start: number; end: number } | null>(null);
-const hasLoadedDataRef = useRef(false);
 
   const handleBack = () => {
     navigate('/');
@@ -74,8 +72,6 @@ const hasLoadedDataRef = useRef(false);
         await Read_BTF((pathElement as HTMLInputElement).value);
         await InitializeFromStoredFile();
 
-        hasLoadedDataRef.current = true;
-        // Increment trigger to remount TuneGraph with completely fresh data
         setGraphUpdateTrigger(prev => prev + 1);
       } catch(e) {
         LogPrint(`Error loading graph data: ${e}`)
@@ -100,14 +96,8 @@ const hasLoadedDataRef = useRef(false);
     }
 
   useEffect(() => {
-    const initializePage = async () => {
-      if (!hasLoadedDataRef.current) {
-        await ClearGraphState();
-      }
-      const loadedPresets = PresetManager.loadPresets();
-      setPresets(loadedPresets);
-    };
-    initializePage();
+    const loadedPresets = PresetManager.loadPresets();
+    setPresets(loadedPresets);
   }, []);
 
   useEffect(() => {
@@ -120,7 +110,6 @@ const hasLoadedDataRef = useRef(false);
     // Listen for multi-file data loaded event
     const unsubscribeMultiFile = EventsOn('multi-file-loaded', () => {
       LogPrint('Multi-file data loaded, updating graph state');
-      hasLoadedDataRef.current = true;
       setGraphUpdateTrigger(prev => prev + 1);
     });
 
@@ -428,7 +417,8 @@ const hasLoadedDataRef = useRef(false);
                 minWidth: 0,
                 overflow: 'hidden',
                 display: 'flex',
-                flexDirection: 'column'
+                flexDirection: 'column',
+                padding: '10px'
             }}>
                 <TuneGraph key={graphUpdateTrigger} />
             </div>

@@ -337,6 +337,20 @@ func (fg *Full_graph) buildAllLODLevelsFromStored(channel *Data_channel, rawData
 		}
 	}
 
+	// Always include the last point in each LOD level to ensure full range coverage
+	lastIdx := fullSize - 1
+	lastVal := rawData[lastIdx]
+	if !math.IsNaN(lastVal) && !math.IsInf(lastVal, 0) {
+		for step := 1; step <= maxLODStep; step *= 2 {
+			if lastIdx%step != 0 {
+				lod := lodLevels[step]
+				lod.Timestamps = append(lod.Timestamps, fg.FullTimeStamps[lastIdx])
+				lod.IndexMap = append(lod.IndexMap, int64(lastIdx))
+				lod.Values = append(lod.Values, lastVal)
+			}
+		}
+	}
+
 	// Assign the built LOD levels to the channel
 	channel.DataLines = lodLevels
 }
@@ -495,6 +509,10 @@ func (fg *Full_graph) GetViewportData(req Viewport_request) (*Viewport_response,
 	startIdx := fg.findTimeIndex(referenceLOD.Timestamps, req.StartTime)
 	endIdx := fg.findTimeIndex(referenceLOD.Timestamps, req.EndTime)
 
+	// findTimeIndex returns inclusive indices, but Go slices need exclusive end index
+	// So increment endIdx to include the found timestamp in the slice
+	endIdx = endIdx + 1
+
 	if endIdx <= startIdx {
 		endIdx = startIdx + 1
 	}
@@ -502,12 +520,25 @@ func (fg *Full_graph) GetViewportData(req Viewport_request) (*Viewport_response,
 		endIdx = len(referenceLOD.Timestamps)
 	}
 
-	bufferSize := (endIdx - startIdx) / 10
-	if bufferSize < 1 {
-		bufferSize = 1
+	// Check if we're viewing the full dataset (or very close to it)
+	// If so, don't add buffer to avoid clamping at edges
+	dataStart := referenceLOD.Timestamps[0]
+	dataEnd := referenceLOD.Timestamps[len(referenceLOD.Timestamps)-1]
+	dataRange := dataEnd - dataStart
+	requestedRange := req.EndTime - req.StartTime
+
+	// If requesting >= 99% of data range, skip buffer to show true edges
+	isFullZoom := requestedRange >= 0.99*dataRange
+
+	if !isFullZoom {
+		// Apply 10% buffer for smooth panning
+		bufferSize := (endIdx - startIdx) / 10
+		if bufferSize < 1 {
+			bufferSize = 1
+		}
+		startIdx = maxInt(0, startIdx-bufferSize)
+		endIdx = minInt(len(referenceLOD.Timestamps), endIdx+bufferSize)
 	}
-	startIdx = maxInt(0, startIdx-bufferSize)
-	endIdx = minInt(len(referenceLOD.Timestamps), endIdx+bufferSize)
 
 	response := &Viewport_response{
 		Timestamps:      referenceLOD.Timestamps[startIdx:endIdx],

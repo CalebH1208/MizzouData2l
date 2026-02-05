@@ -3,6 +3,7 @@ import { Backend } from '../../wailsjs/go/models';
 import XYScatterToolUI from './tools/XYScatterToolUI';
 import DownforceToolUI from './tools/DownforceToolUI';
 import ShiftAnalysisToolUI from './tools/ShiftAnalysisToolUI';
+import GPSLapToolUI from './tools/GPSLapToolUI';
 
 interface ToolExecutorProps {
   fragment: Backend.Data_fragment;
@@ -23,6 +24,8 @@ const ToolExecutor: React.FC<ToolExecutorProps> = ({
         return <DownforceToolUI fragment={fragment} />;
       case 'shift-analysis':
         return <ShiftAnalysisToolUI fragment={fragment} />;
+      case 'gps-lap-analysis':
+        return <GPSLapToolUI fragment={fragment} />;
       default:
         return (
           <div style={{

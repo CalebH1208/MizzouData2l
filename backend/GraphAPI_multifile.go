@@ -147,10 +147,17 @@ func (fg *Full_graph) initializeFromMultipleFilesInternal(filePaths []string) ([
 	idx := 0
 	for _, segment := range fileSegments {
 		timeData := segment.BTF.Channels["Time"].Data
-		for i := 0; i < len(timeData); i++ {
-			fg.FullTimeStamps[idx] = timeData[i] + segment.TimeOffset
-			idx++
+		offset := segment.TimeOffset
+		segmentLen := len(timeData)
+
+		if offset == 0 {
+			copy(fg.FullTimeStamps[idx:], timeData)
+		} else {
+			for i := 0; i < segmentLen; i++ {
+				fg.FullTimeStamps[idx+i] = timeData[i] + offset
+			}
 		}
+		idx += segmentLen
 	}
 	fmt.Printf("[InitializeFromMultipleFiles] Unified timeline built successfully\n")
 
@@ -216,70 +223,96 @@ func (fg *Full_graph) initializeFromMultipleFilesInternal(filePaths []string) ([
 }
 
 func (fg *Full_graph) mergeChannelsAcrossFiles(segments []fileSegment, allChannels map[string]string) []string {
-	warnings := make([]string, 0)
-	channelIdx := 0
-	totalChannels := len(allChannels)
-
-	for channelName, canonicalUnit := range allChannels {
-		channelIdx++
-		fmt.Printf("[mergeChannelsAcrossFiles] Processing channel %d/%d: '%s'\n", channelIdx, totalChannels, channelName)
-
-		channel := &Data_channel{
-			Name:       channelName,
-			Unit:       canonicalUnit,
-			Color:      generateVibrantColor(channelName),
-			GraphIndex: -1,
-			DataLines:  make(map[int]*LOD_data_line),
-		}
-
-		totalPoints := 0
-		for _, segment := range segments {
-			totalPoints += segment.DataPointCount
-		}
-
-		mergedData := make([]float64, totalPoints)
-		idx := 0
-
-		for fileIdx, segment := range segments {
-			if storedChannel, exists := segment.BTF.Channels[channelName]; exists {
-				for i := 0; i < len(storedChannel.Data); i++ {
-					mergedData[idx] = storedChannel.Data[i]
-					idx++
-				}
-			} else {
-				warning := fmt.Sprintf("Channel '%s' missing in File %d (%s) - filled with zeros",
-					channelName, fileIdx, segment.OriginalName)
-				fmt.Printf("[WARNING] %s\n", warning)
-				warnings = append(warnings, warning)
-
-				for i := 0; i < segment.DataPointCount; i++ {
-					mergedData[idx] = 0.0
-					idx++
-				}
-			}
-		}
-
-		fmt.Printf("[mergeChannelsAcrossFiles] Channel '%s': building LOD line with %d total points\n", channelName, totalPoints)
-		lodLine := &LOD_data_line{
-			Step:       1,
-			Timestamps: make([]float64, 0, totalPoints),
-			IndexMap:   make([]int64, 0, totalPoints),
-			Values:     mergedData,
-		}
-
-		fmt.Printf("[mergeChannelsAcrossFiles] Channel '%s': populating timestamps and index map\n", channelName)
-		for i := 0; i < totalPoints; i++ {
-			if !math.IsNaN(mergedData[i]) && !math.IsInf(mergedData[i], 0) {
-				lodLine.Timestamps = append(lodLine.Timestamps, fg.FullTimeStamps[i])
-				lodLine.IndexMap = append(lodLine.IndexMap, int64(i))
-			}
-		}
-
-		channel.DataLines[1] = lodLine
-		fg.ViewableChannels[channelName] = channel
-		fmt.Printf("[mergeChannelsAcrossFiles] Channel '%s': complete (%d valid points)\n", channelName, len(lodLine.Timestamps))
+	type channelResult struct {
+		channel  *Data_channel
+		warnings []string
 	}
 
+	results := make(chan channelResult, len(allChannels))
+	var wg sync.WaitGroup
+
+	channelNames := make([]string, 0, len(allChannels))
+	for name := range allChannels {
+		channelNames = append(channelNames, name)
+	}
+
+	fmt.Printf("[mergeChannelsAcrossFiles] Processing %d channels in parallel...\n", len(allChannels))
+
+	for _, channelName := range channelNames {
+		canonicalUnit := allChannels[channelName]
+		wg.Add(1)
+
+		go func(chName, unit string) {
+			defer wg.Done()
+
+			channel := &Data_channel{
+				Name:       chName,
+				Unit:       unit,
+				Color:      generateVibrantColor(chName),
+				GraphIndex: -1,
+				DataLines:  make(map[int]*LOD_data_line),
+			}
+
+			totalPoints := 0
+			for _, segment := range segments {
+				totalPoints += segment.DataPointCount
+			}
+
+			mergedData := make([]float64, totalPoints)
+			idx := 0
+			channelWarnings := make([]string, 0)
+
+			for fileIdx, segment := range segments {
+				if storedChannel, exists := segment.BTF.Channels[chName]; exists {
+					copy(mergedData[idx:], storedChannel.Data)
+					idx += len(storedChannel.Data)
+				} else {
+					warning := fmt.Sprintf("Channel '%s' missing in File %d (%s) - filled with zeros",
+						chName, fileIdx, segment.OriginalName)
+					channelWarnings = append(channelWarnings, warning)
+
+					for i := 0; i < segment.DataPointCount; i++ {
+						mergedData[idx] = 0.0
+						idx++
+					}
+				}
+			}
+
+			lodLine := &LOD_data_line{
+				Step:       1,
+				Timestamps: make([]float64, 0, totalPoints),
+				IndexMap:   make([]int64, 0, totalPoints),
+				Values:     mergedData,
+			}
+
+			for i := 0; i < totalPoints; i++ {
+				if !math.IsNaN(mergedData[i]) && !math.IsInf(mergedData[i], 0) {
+					lodLine.Timestamps = append(lodLine.Timestamps, fg.FullTimeStamps[i])
+					lodLine.IndexMap = append(lodLine.IndexMap, int64(i))
+				}
+			}
+
+			channel.DataLines[1] = lodLine
+
+			results <- channelResult{
+				channel:  channel,
+				warnings: channelWarnings,
+			}
+		}(channelName, canonicalUnit)
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	warnings := make([]string, 0)
+	for result := range results {
+		fg.ViewableChannels[result.channel.Name] = result.channel
+		warnings = append(warnings, result.warnings...)
+	}
+
+	fmt.Printf("[mergeChannelsAcrossFiles] Channel merging complete with %d warnings\n", len(warnings))
 	return warnings
 }
 
@@ -434,6 +467,25 @@ func (fg *Full_graph) AppendFileToSequence(filePath string, position int) ([]str
 
 	fmt.Printf("[AppendFileToSequence] Successfully appended file, generated %d warnings\n", len(warnings))
 	return warnings, nil
+}
+
+func (fg *Full_graph) CheckMRTFFileExists(fileName string) (bool, error) {
+	exePath, err := os.Executable()
+	if err != nil {
+		return false, fmt.Errorf("failed to get executable path: %w", err)
+	}
+	exeDir := filepath.Dir(exePath)
+	cacheDir := filepath.Join(exeDir, "DATACACHE")
+	filePath := filepath.Join(cacheDir, fileName+".MRTF")
+
+	_, err = os.Stat(filePath)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 func (fg *Full_graph) SaveConcatenatedFile(newFileName string) error {

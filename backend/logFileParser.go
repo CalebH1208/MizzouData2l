@@ -74,16 +74,27 @@ func (file *Telemetry_file) Load_telemetry_file(path string) error {
 		return err
 	}
 	for i := range names {
-		c, err := strconv.ParseFloat(conv[i], 32)
+		// Handle empty conversion values
+		convStr := conv[i]
+		if convStr == "" {
+			convStr = "-7"
+		}
+		c, err := strconv.ParseFloat(convStr, 32)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to parse conversion '%s' for channel '%s': %w", conv[i], names[i], err)
 		}
 		if c == -7 {
 			c = 1
 		}
-		p, err := strconv.ParseFloat(prec[i], 32)
+
+		// Handle empty precision values
+		precStr := prec[i]
+		if precStr == "" {
+			precStr = "32"
+		}
+		p, err := strconv.ParseFloat(precStr, 32)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to parse precision '%s' for channel '%s': %w", prec[i], names[i], err)
 		}
 		if p == 32 {
 			p = 1
@@ -101,9 +112,13 @@ func (file *Telemetry_file) Load_telemetry_file(path string) error {
 			return err
 		}
 		for i, val := range record {
+			// Handle empty values
+			if val == "" {
+				val = "0"
+			}
 			v, err := strconv.ParseFloat(val, 32)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to parse value '%s' for channel '%s' at row %d: %w", val, file.Channels[i].Name, len(file.Channels[i].Data), err)
 			}
 			file.Channels[i].Data = append(file.Channels[i].Data, float32(v)*file.Channels[i].Conversion)
 		}

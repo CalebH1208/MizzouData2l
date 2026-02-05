@@ -332,9 +332,21 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
     const graphHeight = chartHeight / numGraphs;
 
     // Create X scale (shared across all graphs)
+    // Use the requested viewport bounds, not the returned buffered bounds
+    // This ensures we see the exact range we asked for
     const xScale = d3.scaleLinear()
-      .domain([viewportData.viewportStart, viewportData.viewportEnd])
+      .domain([viewportStart, viewportEnd])
       .range([0, chartWidth]);
+
+    // Define clip path to prevent lines from extending outside chart area
+    svg.append('defs')
+      .append('clipPath')
+      .attr('id', 'chart-clip')
+      .append('rect')
+      .attr('x', 0)
+      .attr('y', 0)
+      .attr('width', chartWidth)
+      .attr('height', chartHeight);
 
     // Draw alternating background shading for multi-file datasets
     if (viewportData.fileMetadataList && viewportData.fileMetadataList.length > 0) {
@@ -343,9 +355,9 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
         const fileEnd = file.adjustedEnd;
 
         // Only draw if this file overlaps with the viewport
-        if (fileEnd >= viewportData.viewportStart && fileStart <= viewportData.viewportEnd) {
-          const visibleStart = Math.max(fileStart, viewportData.viewportStart);
-          const visibleEnd = Math.min(fileEnd, viewportData.viewportEnd);
+        if (fileEnd >= viewportStart && fileStart <= viewportEnd) {
+          const visibleStart = Math.max(fileStart, viewportStart);
+          const visibleEnd = Math.min(fileEnd, viewportEnd);
 
           // Use file index to determine color - consistent regardless of zoom
           const isEven = fileIdx % 2 === 0;
@@ -367,6 +379,10 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       const yOffset = margin.top + graphIndex * graphHeight;
       const g = svg.append('g')
         .attr('transform', `translate(${margin.left}, ${yOffset})`);
+
+      // Create a clipped group for data (lines and points only)
+      const clippedGroup = g.append('g')
+        .attr('clip-path', 'url(#chart-clip)');
 
       // Check if this graph uses split-axis mode
       const useSplitAxis = graph.useSplitAxis || false;
@@ -395,7 +411,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
             .y(d => normalizedYScale(d))
             .defined(d => !isNaN(d) && isFinite(d));
 
-          g.append('path')
+          clippedGroup.append('path')
             .datum(normalizedValues)
             .attr('fill', 'none')
             .attr('stroke', channel.color || '#F1B82D')
@@ -405,7 +421,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
           // Draw points when detailed enough
           if (viewportData.lodStep === 1 && viewportData.totalPoints <= 200) {
             const sanitizedName = sanitizeClassName(channel.name);
-            g.selectAll(`circle.point-${graphIndex}-${sanitizedName}`)
+            clippedGroup.selectAll(`circle.point-${graphIndex}-${sanitizedName}`)
               .data(normalizedValues.map((v, i) => ({
                 x: viewportData.timestamps[i],
                 y: v
@@ -466,7 +482,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
             .y(d => yScale(d))
             .defined(d => !isNaN(d));
 
-          g.append('path')
+          clippedGroup.append('path')
             .datum(channel.values)
             .attr('fill', 'none')
             .attr('stroke', channel.color || '#F1B82D')
@@ -476,7 +492,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
           // Draw points when detailed enough
           if (viewportData.lodStep === 1 && viewportData.totalPoints <= 200) {
             const sanitizedName = sanitizeClassName(channel.name);
-            g.selectAll(`circle.point-${graphIndex}-${sanitizedName}`)
+            clippedGroup.selectAll(`circle.point-${graphIndex}-${sanitizedName}`)
               .data(channel.values.map((v, i) => ({
                 x: viewportData.timestamps[i],
                 y: v
@@ -545,14 +561,19 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       }
     });
 
+    // Create a clipped group for vertical lines (cursor, markers, boundaries)
+    const verticalLinesGroup = svg.append('g')
+      .attr('clip-path', 'url(#chart-clip)')
+      .attr('transform', `translate(${margin.left}, ${margin.top})`);
+
     // Draw vertical cursor across all graphs if set and within range
-    if (cursorTime !== null && cursorTime >= viewportData.viewportStart && cursorTime <= viewportData.viewportEnd) {
-      const x = margin.left + xScale(cursorTime);
-      svg.append('line')
+    if (cursorTime !== null && cursorTime >= viewportStart && cursorTime <= viewportEnd) {
+      const x = xScale(cursorTime);
+      verticalLinesGroup.append('line')
         .attr('x1', x)
         .attr('x2', x)
-        .attr('y1', margin.top)
-        .attr('y2', height - margin.bottom)
+        .attr('y1', 0)
+        .attr('y2', chartHeight)
         .attr('stroke', '#00FF00')
         .attr('stroke-width', cursorStrokeWidth)
         .attr('opacity', 0.9)
@@ -563,16 +584,18 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
     if (viewportData.exportStarts && viewportData.exportStarts.length > 0) {
       viewportData.exportStarts.forEach(idx => {
         const time = viewportData.timestamps[idx];
-        const x = margin.left + xScale(time);
-        svg.append('line')
-          .attr('x1', x)
-          .attr('x2', x)
-          .attr('y1', margin.top)
-          .attr('y2', height - margin.bottom)
-          .attr('stroke', '#0099FF')
-          .attr('stroke-width', cursorStrokeWidth)
-          .attr('opacity', 0.7)
-          .attr('pointer-events', 'none');
+        if (time >= viewportStart && time <= viewportEnd) {
+          const x = xScale(time);
+          verticalLinesGroup.append('line')
+            .attr('x1', x)
+            .attr('x2', x)
+            .attr('y1', 0)
+            .attr('y2', chartHeight)
+            .attr('stroke', '#0099FF')
+            .attr('stroke-width', cursorStrokeWidth)
+            .attr('opacity', 0.7)
+            .attr('pointer-events', 'none');
+        }
       });
     }
 
@@ -580,16 +603,18 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
     if (viewportData.exportEnds && viewportData.exportEnds.length > 0) {
       viewportData.exportEnds.forEach(idx => {
         const time = viewportData.timestamps[idx];
-        const x = margin.left + xScale(time);
-        svg.append('line')
-          .attr('x1', x)
-          .attr('x2', x)
-          .attr('y1', margin.top)
-          .attr('y2', height - margin.bottom)
-          .attr('stroke', '#FFD700')
-          .attr('stroke-width', cursorStrokeWidth)
-          .attr('opacity', 0.7)
-          .attr('pointer-events', 'none');
+        if (time >= viewportStart && time <= viewportEnd) {
+          const x = xScale(time);
+          verticalLinesGroup.append('line')
+            .attr('x1', x)
+            .attr('x2', x)
+            .attr('y1', 0)
+            .attr('y2', chartHeight)
+            .attr('stroke', '#FFD700')
+            .attr('stroke-width', cursorStrokeWidth)
+            .attr('opacity', 0.7)
+            .attr('pointer-events', 'none');
+        }
       });
     }
 
@@ -597,17 +622,18 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
     if (viewportData.fileBoundaryIndices && viewportData.fileBoundaryIndices.length > 0) {
       viewportData.fileBoundaryIndices.forEach((idx) => {
         const time = viewportData.timestamps[idx];
-        const x = margin.left + xScale(time);
-
-        svg.append('line')
-          .attr('x1', x)
-          .attr('x2', x)
-          .attr('y1', margin.top)
-          .attr('y2', height - margin.bottom)
-          .attr('stroke', '#FF0000')
-          .attr('stroke-width', 2)
-          .attr('opacity', 0.8)
-          .attr('pointer-events', 'none');
+        if (time >= viewportStart && time <= viewportEnd) {
+          const x = xScale(time);
+          verticalLinesGroup.append('line')
+            .attr('x1', x)
+            .attr('x2', x)
+            .attr('y1', 0)
+            .attr('y2', chartHeight)
+            .attr('stroke', '#FF0000')
+            .attr('stroke-width', 2)
+            .attr('opacity', 0.8)
+            .attr('pointer-events', 'none');
+        }
       });
     }
 
@@ -618,9 +644,9 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
         const fileEnd = file.adjustedEnd;
 
         // Only draw label if this file overlaps with the viewport
-        if (fileEnd >= viewportData.viewportStart && fileStart <= viewportData.viewportEnd) {
-          const visibleStart = Math.max(fileStart, viewportData.viewportStart);
-          const visibleEnd = Math.min(fileEnd, viewportData.viewportEnd);
+        if (fileEnd >= viewportStart && fileStart <= viewportEnd) {
+          const visibleStart = Math.max(fileStart, viewportStart);
+          const visibleEnd = Math.min(fileEnd, viewportEnd);
           const sectionCenter = (visibleStart + visibleEnd) / 2;
           const centerX = margin.left + xScale(sectionCenter);
 
@@ -702,44 +728,48 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       return; // do not zoom in further
     }
 
+    const minTime = metadata.timeRange[0];
+    const maxTime = metadata.timeRange[1];
+    const dataRange = maxTime - minTime;
+
+    // Stop zooming out when already viewing full dataset (or very close to it)
+    const currentRange = viewportEnd - viewportStart;
+    if (delta > 0 && currentRange >= 0.99 * dataRange) {
+      // Snap to exact boundaries when very close to full zoom
+      setViewportStart(minTime);
+      setViewportEnd(maxTime);
+      return;
+    }
+
     // Zoom around cursor (pivot). If no cursor or out of range, use center
     const pivot = (cursorTime !== null && cursorTime >= viewportStart && cursorTime <= viewportEnd)
       ? cursorTime
       : (viewportStart + viewportEnd) / 2;
 
-    // Calculate the pivot's relative position in current viewport (0 to 1)
-    const currentRange = viewportEnd - viewportStart;
-    const pivotRatio = (pivot - viewportStart) / currentRange;
-
     // Scale distances from pivot
     let newStart = pivot - (pivot - viewportStart) * zoomFactor;
     let newEnd = pivot + (viewportEnd - pivot) * zoomFactor;
 
-    // Clamp to total dataset range while maintaining pivot position
-    const minTime = metadata.timeRange[0];
-    const maxTime = metadata.timeRange[1];
-
+    // Simple clamping to dataset boundaries
     if (newStart < minTime) {
       newStart = minTime;
-      newEnd = pivot + (pivot - minTime) / pivotRatio * (1 - pivotRatio);
-      if (newEnd > maxTime) {
-        newEnd = maxTime;
-      }
     }
-
     if (newEnd > maxTime) {
       newEnd = maxTime;
-      newStart = pivot - (maxTime - pivot) / (1 - pivotRatio) * pivotRatio;
-      if (newStart < minTime) {
-        newStart = minTime;
-      }
     }
 
+    // Ensure minimum range
     if (newEnd <= newStart) {
-      // Ensure at least 1 unit range, centered on pivot
       const eps = 1;
       newStart = Math.max(minTime, pivot - eps / 2);
       newEnd = Math.min(maxTime, pivot + eps / 2);
+    }
+
+    // When zooming out and getting close to full range, snap to boundaries
+    const newRange = newEnd - newStart;
+    if (delta > 0 && newRange >= 0.95 * dataRange) {
+      newStart = minTime;
+      newEnd = maxTime;
     }
 
     setViewportStart(newStart);
@@ -766,8 +796,9 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
     const xWithin = clientX - rect.left - margin.left;
     if (xWithin < 0 || xWithin > chartWidth) return;
 
+    // Use requested viewport bounds to match the rendering scale
     const xScale = d3.scaleLinear()
-      .domain([viewportData.viewportStart, viewportData.viewportEnd])
+      .domain([viewportStart, viewportEnd])
       .range([0, chartWidth]);
     const t = xScale.invert(xWithin);
 
@@ -789,7 +820,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
     setCursorTime(snapped);
     // inform backend (will snap to full-res internally)
     try { SetCursorPosition(snapped); } catch {}
-  }, [viewportData, margin.left, chartWidth]);
+  }, [viewportData, viewportStart, viewportEnd, margin.left, chartWidth]);
 
   // Left-click and drag to set/move cursor
   useEffect(() => {
@@ -844,8 +875,9 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       // Only show menu if click is within chart area
       if (xWithin < 0 || xWithin > chartWidth) return;
 
+      // Use requested viewport bounds to match the rendering scale
       const xScale = d3.scaleLinear()
-        .domain([viewportData.viewportStart, viewportData.viewportEnd])
+        .domain([viewportStart, viewportEnd])
         .range([0, chartWidth]);
       const t = xScale.invert(xWithin);
 
@@ -881,7 +913,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       container.addEventListener('contextmenu', onContextMenu);
       return () => container.removeEventListener('contextmenu', onContextMenu);
     }
-  }, [viewportData, margin.left, chartWidth, disableContextMenu]);
+  }, [viewportData, viewportStart, viewportEnd, margin.left, chartWidth, disableContextMenu]);
 
   // Close context menu on click outside
   useEffect(() => {

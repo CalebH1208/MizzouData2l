@@ -481,14 +481,16 @@ func combineDataFiles(hz100Path, hz10Path, hz1Path, outputPath string) error {
 		// Add 10Hz interpolated data (excluding time column)
 		for j, col := range data10.header.columns {
 			if strings.ToLower(strings.TrimSpace(col)) != "time" {
-				row = append(row, fmt.Sprintf("%f", interp10[i][j]))
+				value := interp10[i][j]
+				row = append(row, strconv.FormatFloat(value, 'f', -1, 64))
 			}
 		}
 
 		// Add 1Hz interpolated data (excluding time column)
 		for j, col := range data1.header.columns {
 			if strings.ToLower(strings.TrimSpace(col)) != "time" {
-				row = append(row, fmt.Sprintf("%f", interp1[i][j]))
+				value := interp1[i][j]
+				row = append(row, strconv.FormatFloat(value, 'f', -1, 64))
 			}
 		}
 
