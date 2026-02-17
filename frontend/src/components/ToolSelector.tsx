@@ -25,7 +25,10 @@ const ToolSelector: React.FC<ToolSelectorProps> = ({
     try {
       setIsLoading(true);
       const tools = await GetAvailableTools();
-      setAvailableTools(tools || []);
+      const sortedTools = (tools || []).sort((a, b) =>
+        a.name.localeCompare(b.name)
+      );
+      setAvailableTools(sortedTools);
       setIsLoading(false);
     } catch (err) {
       setError(`Failed to load tools: ${err}`);

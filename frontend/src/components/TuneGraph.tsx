@@ -393,7 +393,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
         // Normalized Y scale (0-1) for rendering
         const normalizedYScale = d3.scaleLinear()
           .domain([0, 1])
-          .range([graphHeight - 10, 10]);
+          .range([graphHeight, 0]);
 
         // Draw each channel with normalization
         graph.channels.forEach((channel, channelIdx) => {
@@ -440,7 +440,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
           // Create Y-scale for this channel's actual values (for axis labels)
           const channelYScale = d3.scaleLinear()
             .domain([yMin, yMax])
-            .range([graphHeight - 10, 10]);
+            .range([graphHeight, 0]);
 
           // Render Y-axis for this channel (alternate left/right)
           const isLeft = channelIdx % 2 === 0;
@@ -933,7 +933,13 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-      e.preventDefault(); // Prevent default scrolling behavior
+
+      const activeElement = document.activeElement;
+      if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'SELECT')) {
+        return;
+      }
+
+      e.preventDefault();
 
       const ts = viewportData.timestamps;
       if (!ts || ts.length === 0) return;

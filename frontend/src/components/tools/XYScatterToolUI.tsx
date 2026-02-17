@@ -28,6 +28,16 @@ interface ZoomState {
   yMax: number;
 }
 
+interface BoundsConfig {
+  xMin: string;
+  xMax: string;
+  yMin: string;
+  yMax: string;
+  colorMin: string;
+  colorMax: string;
+  enabled: boolean;
+}
+
 const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
   const [channelNames, setChannelNames] = useState<string[]>([]);
   const [xChannel, setXChannel] = useState<string>('');
@@ -40,6 +50,15 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
   const [invalidFields, setInvalidFields] = useState<Set<string>>(new Set());
   const [zoomStack, setZoomStack] = useState<ZoomState[]>([]);
   const [hoveredPoint, setHoveredPoint] = useState<ScatterPoint | null>(null);
+  const [boundsConfig, setBoundsConfig] = useState<BoundsConfig>({
+    xMin: '',
+    xMax: '',
+    yMin: '',
+    yMax: '',
+    colorMin: '',
+    colorMax: '',
+    enabled: false
+  });
 
   const svgRef = useRef<SVGSVGElement>(null);
   const isDragging = useRef(false);
@@ -97,7 +116,7 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
     if (result && result.data) {
       renderScatterPlot();
     }
-  }, [result, zoomStack]);
+  }, [result, zoomStack, boundsConfig.enabled]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -367,16 +386,45 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
     const enableHover = data.length <= 20000;
 
     const currentZoom = zoomStack.length > 0 ? zoomStack[zoomStack.length - 1] : null;
-    let xRange = currentZoom ? [currentZoom.xMin, currentZoom.xMax] : (metadata.xRange as number[]);
-    let yRange = currentZoom ? [currentZoom.yMin, currentZoom.yMax] : (metadata.yRange as number[]);
 
-    // Add 10% padding to ranges if not zoomed
-    if (!currentZoom) {
+    let xRange: [number, number];
+    let yRange: [number, number];
+    let colorRange: [number, number] | null = null;
+
+    if (currentZoom) {
+      xRange = [currentZoom.xMin, currentZoom.xMax];
+      yRange = [currentZoom.yMin, currentZoom.yMax];
+    } else {
+      xRange = metadata.xRange as [number, number];
+      yRange = metadata.yRange as [number, number];
+
       const xPadding = (xRange[1] - xRange[0]) * 0.05;
       xRange = [xRange[0] - xPadding, xRange[1] + xPadding];
 
       const yPadding = (yRange[1] - yRange[0]) * 0.05;
       yRange = [yRange[0] - yPadding, yRange[1] + yPadding];
+    }
+
+    if (boundsConfig.enabled) {
+      if (boundsConfig.xMin !== '') {
+        xRange[0] = Number(boundsConfig.xMin);
+      }
+      if (boundsConfig.xMax !== '') {
+        xRange[1] = Number(boundsConfig.xMax);
+      }
+      if (boundsConfig.yMin !== '') {
+        yRange[0] = Number(boundsConfig.yMin);
+      }
+      if (boundsConfig.yMax !== '') {
+        yRange[1] = Number(boundsConfig.yMax);
+      }
+
+      if (metadata.hasColor) {
+        const autoColorRange = metadata.colorRange as number[];
+        const colorMin = boundsConfig.colorMin !== '' ? Number(boundsConfig.colorMin) : autoColorRange[0];
+        const colorMax = boundsConfig.colorMax !== '' ? Number(boundsConfig.colorMax) : autoColorRange[1];
+        colorRange = [colorMin, colorMax];
+      }
     }
 
     const xScale = d3.scaleLinear()
@@ -415,9 +463,9 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
 
     let colorScale: d3.ScaleSequential<string> | null = null;
     if (metadata.hasColor) {
-      const colorRange = metadata.colorRange as number[];
+      const effectiveColorRange = colorRange || (metadata.colorRange as number[]);
       colorScale = d3.scaleSequential(nipySpectralInterpolator)
-        .domain(colorRange);
+        .domain(effectiveColorRange);
     }
 
     const g = svg.append('g')
@@ -427,6 +475,8 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
       .append('clipPath')
       .attr('id', 'plot-clip')
       .append('rect')
+      .attr('x', 0)
+      .attr('y', 0)
       .attr('width', plotWidth)
       .attr('height', plotHeight);
 
@@ -508,10 +558,11 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
         .attr('x2', '0%')
         .attr('y2', '0%');
 
+      const effectiveColorRange = colorRange || (metadata.colorRange as number[]);
+
       for (let i = 0; i <= legendSteps; i++) {
         const ratio = i / legendSteps;
-        const colorRange = metadata.colorRange as number[];
-        const value = colorRange[0] + ratio * (colorRange[1] - colorRange[0]);
+        const value = effectiveColorRange[0] + ratio * (effectiveColorRange[1] - effectiveColorRange[0]);
         gradient.append('stop')
           .attr('offset', `${ratio * 100}%`)
           .attr('stop-color', colorScale(value));
@@ -524,9 +575,8 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
         .attr('stroke', '#aaa')
         .attr('stroke-width', 1);
 
-      const colorRange = metadata.colorRange as number[];
       const legendScale = d3.scaleLinear()
-        .domain(colorRange)
+        .domain(effectiveColorRange)
         .range([legendHeight, 0]);
 
       const legendAxis = d3.axisRight(legendScale).ticks(5);
@@ -762,10 +812,17 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
           borderRadius: '4px',
           border: '1px solid #333',
           display: 'flex',
-          alignItems: 'center',
+          flexDirection: 'column',
           gap: '8px',
-          flexWrap: 'wrap',
+          flexShrink: 0,
         }}>
+          {/* First Row - Main Controls */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            flexWrap: 'wrap',
+          }}>
           {/* X Channel */}
           <div style={{ flex: '0 1 200px', minWidth: '150px' }}>
             <label style={{ display: 'block', marginBottom: '2px', fontSize: '10px', color: '#aaa' }}>
@@ -804,7 +861,7 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
               }}
             >
               <option value="">Select X...</option>
-              {channelNames.map(name => (
+              {[...channelNames].sort().map(name => (
                 <option key={name} value={name}>{name}</option>
               ))}
             </select>
@@ -848,7 +905,7 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
               }}
             >
               <option value="">Select Y...</option>
-              {channelNames.map(name => (
+              {[...channelNames].sort().map(name => (
                 <option key={name} value={name}>{name}</option>
               ))}
             </select>
@@ -892,7 +949,7 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
               }}
             >
               <option value="">None</option>
-              {channelNames.map(name => (
+              {[...channelNames].sort().map(name => (
                 <option key={name} value={name}>{name}</option>
               ))}
             </select>
@@ -940,6 +997,22 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
             </button>
           )}
 
+          <div style={{ flex: '0 1 auto', minWidth: '120px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <label style={{ fontSize: '10px', color: '#aaa' }}>Manual Bounds:</label>
+            <input
+              type="checkbox"
+              checked={boundsConfig.enabled}
+              onChange={(e) => setBoundsConfig(prev => ({ ...prev, enabled: e.target.checked }))}
+              style={{
+                width: '16px',
+                height: '16px',
+                accentColor: '#F1B82D',
+                cursor: 'pointer',
+                marginTop: '14px',
+              }}
+            />
+          </div>
+
           <button
             onClick={handleFeelingLucky}
             disabled={isExecuting || channelNames.length < 2}
@@ -982,6 +1055,198 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
           >
               Export PNG
           </button>
+          </div>
+
+          {/* Second Row - Manual Bounds Controls */}
+          {boundsConfig.enabled && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            flexWrap: 'wrap',
+            paddingTop: '4px',
+            borderTop: '1px solid #333',
+          }}>
+            <div style={{ flex: '0 1 100px', minWidth: '80px' }}>
+              <label style={{ display: 'block', marginBottom: '2px', fontSize: '9px', color: '#aaa' }}>
+                X Min
+              </label>
+              <input
+                type="number"
+                value={boundsConfig.xMin}
+                onChange={(e) => setBoundsConfig(prev => ({ ...prev, xMin: e.target.value }))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    renderScatterPlot();
+                  }
+                }}
+                style={{
+                  width: '100%',
+                  padding: '4px 6px',
+                  backgroundColor: '#000',
+                  color: '#fff',
+                  border: '1px solid #555',
+                  borderRadius: '3px',
+                  fontSize: '11px',
+                }}
+                placeholder="Auto"
+              />
+            </div>
+
+            <div style={{ flex: '0 1 100px', minWidth: '80px' }}>
+              <label style={{ display: 'block', marginBottom: '2px', fontSize: '9px', color: '#aaa' }}>
+                X Max
+              </label>
+              <input
+                type="number"
+                value={boundsConfig.xMax}
+                onChange={(e) => setBoundsConfig(prev => ({ ...prev, xMax: e.target.value }))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    renderScatterPlot();
+                  }
+                }}
+                style={{
+                  width: '100%',
+                  padding: '4px 6px',
+                  backgroundColor: '#000',
+                  color: '#fff',
+                  border: '1px solid #555',
+                  borderRadius: '3px',
+                  fontSize: '11px',
+                }}
+                placeholder="Auto"
+              />
+            </div>
+
+            <div style={{ flex: '0 1 100px', minWidth: '80px' }}>
+              <label style={{ display: 'block', marginBottom: '2px', fontSize: '9px', color: '#aaa' }}>
+                Y Min
+              </label>
+              <input
+                type="number"
+                value={boundsConfig.yMin}
+                onChange={(e) => setBoundsConfig(prev => ({ ...prev, yMin: e.target.value }))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    renderScatterPlot();
+                  }
+                }}
+                style={{
+                  width: '100%',
+                  padding: '4px 6px',
+                  backgroundColor: '#000',
+                  color: '#fff',
+                  border: '1px solid #555',
+                  borderRadius: '3px',
+                  fontSize: '11px',
+                }}
+                placeholder="Auto"
+              />
+            </div>
+
+            <div style={{ flex: '0 1 100px', minWidth: '80px' }}>
+              <label style={{ display: 'block', marginBottom: '2px', fontSize: '9px', color: '#aaa' }}>
+                Y Max
+              </label>
+              <input
+                type="number"
+                value={boundsConfig.yMax}
+                onChange={(e) => setBoundsConfig(prev => ({ ...prev, yMax: e.target.value }))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    renderScatterPlot();
+                  }
+                }}
+                style={{
+                  width: '100%',
+                  padding: '4px 6px',
+                  backgroundColor: '#000',
+                  color: '#fff',
+                  border: '1px solid #555',
+                  borderRadius: '3px',
+                  fontSize: '11px',
+                }}
+                placeholder="Auto"
+              />
+            </div>
+
+            {result && result.metadata && (result.metadata as any).hasColor && (
+              <>
+                <div style={{ flex: '0 1 100px', minWidth: '80px' }}>
+                  <label style={{ display: 'block', marginBottom: '2px', fontSize: '9px', color: '#aaa' }}>
+                    Color Min
+                  </label>
+                  <input
+                    type="number"
+                    value={boundsConfig.colorMin}
+                    onChange={(e) => setBoundsConfig(prev => ({ ...prev, colorMin: e.target.value }))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        renderScatterPlot();
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '4px 6px',
+                      backgroundColor: '#000',
+                      color: '#fff',
+                      border: '1px solid #555',
+                      borderRadius: '3px',
+                      fontSize: '11px',
+                    }}
+                    placeholder="Auto"
+                  />
+                </div>
+
+                <div style={{ flex: '0 1 100px', minWidth: '80px' }}>
+                  <label style={{ display: 'block', marginBottom: '2px', fontSize: '9px', color: '#aaa' }}>
+                    Color Max
+                  </label>
+                  <input
+                    type="number"
+                    value={boundsConfig.colorMax}
+                    onChange={(e) => setBoundsConfig(prev => ({ ...prev, colorMax: e.target.value }))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        renderScatterPlot();
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '4px 6px',
+                      backgroundColor: '#000',
+                      color: '#fff',
+                      border: '1px solid #555',
+                      borderRadius: '3px',
+                      fontSize: '11px',
+                    }}
+                    placeholder="Auto"
+                  />
+                </div>
+              </>
+            )}
+
+            <button
+              onClick={() => renderScatterPlot()}
+              style={{
+                padding: '6px 12px',
+                backgroundColor: '#F1B82D',
+                color: '#000',
+                border: 'none',
+                borderRadius: '3px',
+                cursor: 'pointer',
+                fontSize: '11px',
+                fontWeight: 'bold',
+                whiteSpace: 'nowrap',
+                height: '28px',
+                marginLeft: 'auto',
+              }}
+            >
+              Apply Bounds
+            </button>
+          </div>
+          )}
         </div>
 
         {/* Error Display */}

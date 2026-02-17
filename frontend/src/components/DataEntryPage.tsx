@@ -660,8 +660,8 @@ const DataEntryPage: React.FC = () => {
                     const isValidated = !unvalidatedChannelNames.includes(selectedChannel);
                     const presetApplied = presetsApplied.has(selectedChannel);
 
+                    if (isValidated) return '#2f773a'; // green (validated overrides preset)
                     if (presetApplied) return '#c9a227'; // yellow
-                    if (isValidated) return '#2f773a'; // green
                     return '#773a2f'; // red
                   })(),
                   color: 'white',
@@ -680,10 +680,10 @@ const DataEntryPage: React.FC = () => {
                   const presetApplied = presetsApplied.has(channelName);
 
                   let bgColor = '#773a2f';
-                  if (presetApplied) {
-                    bgColor = '#c9a227';
-                  } else if (isValidated) {
+                  if (isValidated) {
                     bgColor = '#2f773a';
+                  } else if (presetApplied) {
+                    bgColor = '#c9a227';
                   }
 
                   return (
