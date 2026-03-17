@@ -18,7 +18,7 @@ func (t *GPSLapTool) GetName() string {
 }
 
 func (t *GPSLapTool) GetDescription() string {
-	return "GPS Lap Analysis - Distance-based lap comparison with time slip, sector analysis, and driver metrics"
+	return "GPS Lap Analysis - Lap detection, sector analysis, theoretical best, and driver metrics"
 }
 
 type LapEvent struct {
@@ -49,7 +49,6 @@ type LapEvent struct {
 	CurvatureAtDistance []float64   `json:"curvatureAtDistance"`
 	GSumAtDistance     []float64    `json:"gSumAtDistance"`
 	LatLonTrace        [][2]float64 `json:"latLonTrace"`
-	SectorTimes        []float64    `json:"sectorTimes"`
 	RawTimes           []float64    `json:"rawTimes"`
 	RawThrottle        []float64    `json:"rawThrottle"`
 	RawBrake           []float64    `json:"rawBrake"`
@@ -57,22 +56,6 @@ type LapEvent struct {
 	RawSpeed           []float64    `json:"rawSpeed"`
 }
 
-type SectorGate struct {
-	Index       int        `json:"index"`
-	Distance    float64    `json:"distance"`
-	Name        string     `json:"name"`
-	LatLonPoint [2]float64 `json:"latLonPoint"`
-}
-
-type TheoreticalBest struct {
-	TotalTime       float64   `json:"totalTime"`
-	TotalDistance   float64   `json:"totalDistance"`
-	SectorTimes     []float64 `json:"sectorTimes"`
-	SourceLaps      []int     `json:"sourceLaps"`
-	DistanceGrid    []float64 `json:"distanceGrid"`
-	TimeAtDistance  []float64 `json:"timeAtDistance"`
-	SpeedAtDistance []float64 `json:"speedAtDistance"`
-}
 
 type LapBoundary struct {
 	StartIdx  int
@@ -161,21 +144,6 @@ func (t *GPSLapTool) Execute(fragment *Backend.Data_fragment, params map[string]
 		steeringChannel = fragment.GetChannel(steeringChannelName)
 	}
 
-	enableAutoSectoring, _ := params["enableAutoSectoring"].(bool)
-	curvatureThreshold := 0.1
-	if val, ok := params["curvatureThreshold"].(float64); ok {
-		curvatureThreshold = val
-	}
-	minStraightLength := 50.0
-	if val, ok := params["minStraightLength"].(float64); ok {
-		minStraightLength = val
-	}
-
-	comparisonMode, ok := params["comparisonMode"].(string)
-	if !ok || comparisonMode == "" {
-		comparisonMode = "two-lap"
-	}
-
 	fmt.Println("[GPSLapTool] Calculating cumulative distance...")
 	cumDistance := calculateCumulativeDistance(latChannel.Values, lonChannel.Values)
 
@@ -212,50 +180,6 @@ func (t *GPSLapTool) Execute(fragment *Backend.Data_fragment, params map[string]
 		laps = append(laps, lap)
 	}
 
-	var sectors []SectorGate
-	if enableAutoSectoring && len(laps) > 0 {
-		fmt.Println("[GPSLapTool] Performing auto-sectoring...")
-		sectors = findStraightSectors(
-			laps[0].CurvatureAtDistance,
-			laps[0].DistanceGrid,
-			latChannel.Values[lapBoundaries[0].StartIdx:lapBoundaries[0].EndIdx],
-			lonChannel.Values[lapBoundaries[0].StartIdx:lapBoundaries[0].EndIdx],
-			curvatureThreshold,
-			minStraightLength,
-		)
-		fmt.Printf("[GPSLapTool] Found %d sector gates\n", len(sectors))
-
-		for i := range laps {
-			laps[i].SectorTimes = calculateSectorTimesForLap(laps[i], sectors)
-		}
-	}
-
-	fmt.Println("[GPSLapTool] Calculating theoretical best...")
-	theoreticalBest := calculateTheoreticalBest(laps, sectors)
-
-	lapAIndex := 0
-	lapBIndex := 0
-	if val, ok := params["lapAIndex"].(float64); ok {
-		lapAIndex = int(val)
-	}
-	if val, ok := params["lapBIndex"].(float64); ok {
-		lapBIndex = int(val)
-	}
-
-	if lapAIndex < 0 || lapAIndex >= len(laps) {
-		lapAIndex = 0
-	}
-	if lapBIndex < 0 || lapBIndex >= len(laps) {
-		lapBIndex = minInt(1, len(laps)-1)
-	}
-
-	var timeSlipData []map[string]float64
-	if comparisonMode == "theoretical-best" {
-		timeSlipData = calculateTimeSlipAgainstTheoretical(laps[lapAIndex], theoreticalBest)
-	} else {
-		timeSlipData = calculateTimeSlip(laps[lapAIndex], laps[lapBIndex])
-	}
-
 	fastestLapIndex := 0
 	fastestLapTime := laps[0].Duration
 	var lapTimes []float64
@@ -268,18 +192,14 @@ func (t *GPSLapTool) Execute(fragment *Backend.Data_fragment, params map[string]
 	}
 
 	metadata := map[string]interface{}{
-		"latChannel":          latChannelName,
-		"lonChannel":          lonChannelName,
-		"speedChannel":        speedChannelName,
-		"totalLaps":           len(laps),
-		"trackLength":         laps[0].TotalDistance,
-		"fastestLapIndex":     fastestLapIndex,
-		"fastestLapTime":      fastestLapTime,
-		"consistencyScore":    calculateStdDevGPS(lapTimes),
-		"theoreticalBestTime": theoreticalBest.TotalTime,
-		"timeToFindVsBest":    fastestLapTime - theoreticalBest.TotalTime,
-		"enableAutoSectoring": enableAutoSectoring,
-		"numSectors":          len(sectors),
+		"latChannel":       latChannelName,
+		"lonChannel":       lonChannelName,
+		"speedChannel":     speedChannelName,
+		"totalLaps":        len(laps),
+		"trackLength":      laps[0].TotalDistance,
+		"fastestLapIndex":  fastestLapIndex,
+		"fastestLapTime":   fastestLapTime,
+		"consistencyScore": calculateStdDevGPS(lapTimes),
 	}
 
 	minLat, maxLat := math.MaxFloat64, -math.MaxFloat64
@@ -303,20 +223,14 @@ func (t *GPSLapTool) Execute(fragment *Backend.Data_fragment, params map[string]
 
 	lapColors := []string{"#F1B82D", "#4ade80", "#3b82f6", "#ef4444", "#a78bfa", "#facc15", "#22d3ee", "#f472b6"}
 
-	fmt.Printf("[GPSLapTool] Analysis complete: %d laps, fastest=%.3fs, theoretical best=%.3fs\n",
-		len(laps), fastestLapTime, theoreticalBest.TotalTime)
+	fmt.Printf("[GPSLapTool] Analysis complete: %d laps, fastest=%.3fs\n",
+		len(laps), fastestLapTime)
 
 	return &Backend.Tool_result{
 		ToolName:   t.GetName(),
 		ResultType: "gps-lap-analysis",
 		Data: map[string]interface{}{
-			"mode":            comparisonMode,
-			"allLaps":         laps,
-			"sectors":         sectors,
-			"theoreticalBest": theoreticalBest,
-			"lapA":            laps[lapAIndex],
-			"lapB":            laps[lapBIndex],
-			"timeSlipGraph":   timeSlipData,
+			"allLaps": laps,
 			"boundingBox": map[string]float64{
 				"minLat": minLat,
 				"maxLat": maxLat,
@@ -514,30 +428,7 @@ func calculateCurvature(lat, lon, cumDistance []float64) []float64 {
 		}
 	}
 
-	curvature = movingAverage(curvature, 5)
-
 	return curvature
-}
-
-func movingAverage(data []float64, windowSize int) []float64 {
-	result := make([]float64, len(data))
-	halfWindow := windowSize / 2
-
-	for i := 0; i < len(data); i++ {
-		sum := 0.0
-		count := 0
-
-		for j := maxInt(0, i-halfWindow); j <= minInt(len(data)-1, i+halfWindow); j++ {
-			sum += data[j]
-			count++
-		}
-
-		if count > 0 {
-			result[i] = sum / float64(count)
-		}
-	}
-
-	return result
 }
 
 func calculateGSum(latAccel, longAccel []float64) []float64 {
@@ -723,7 +614,6 @@ func processLap(
 		CurvatureAtDistance: curvatureResampled,
 		GSumAtDistance:      gSumAtDistance,
 		LatLonTrace:         latLonTrace,
-		SectorTimes:         []float64{},
 		RawTimes:            lapTimesRelative,
 		RawThrottle:         rawThrottle,
 		RawBrake:            rawBrake,
@@ -771,415 +661,6 @@ func calculateThrottleHesitation(throttle, latAccel, times []float64) int {
 	return hesitationCount
 }
 
-func findStraightSectors(curvature, cumDistance, lat, lon []float64, threshold, minLength float64) []SectorGate {
-	var sectors []SectorGate
-
-	inStraight := false
-	straightStartIdx := 0
-
-	for i := 0; i < len(curvature); i++ {
-		if !inStraight && curvature[i] < threshold {
-			inStraight = true
-			straightStartIdx = i
-		} else if inStraight && curvature[i] >= threshold {
-			if i < len(cumDistance) {
-				straightLength := cumDistance[i] - cumDistance[straightStartIdx]
-
-				if straightLength >= minLength {
-					centerIdx := (straightStartIdx + i) / 2
-					if centerIdx < len(lat) && centerIdx < len(lon) && centerIdx < len(cumDistance) {
-						sectors = append(sectors, SectorGate{
-							Index:       len(sectors),
-							Distance:    cumDistance[centerIdx],
-							Name:        fmt.Sprintf("Sector %d", len(sectors)+1),
-							LatLonPoint: [2]float64{lat[centerIdx], lon[centerIdx]},
-						})
-					}
-				}
-			}
-
-			inStraight = false
-		}
-	}
-
-	return sectors
-}
-
-func calculateSectorTimesForLap(lap LapEvent, sectors []SectorGate) []float64 {
-	if len(sectors) == 0 {
-		return []float64{lap.Duration}
-	}
-
-	numSectors := len(sectors) + 1
-	sectorTimes := make([]float64, numSectors)
-
-	lastTime := lap.TimeAtDistance[0]
-	sectorIdx := 0
-
-	for i, dist := range lap.DistanceGrid {
-		if sectorIdx < len(sectors) && dist >= sectors[sectorIdx].Distance {
-			sectorTimes[sectorIdx] = lap.TimeAtDistance[i] - lastTime
-			lastTime = lap.TimeAtDistance[i]
-			sectorIdx++
-		}
-	}
-
-	sectorTimes[numSectors-1] = lap.TimeAtDistance[len(lap.TimeAtDistance)-1] - lastTime
-
-	return sectorTimes
-}
-
-func calculateTheoreticalBest(laps []LapEvent, sectors []SectorGate) TheoreticalBest {
-	if len(laps) == 0 {
-		return TheoreticalBest{}
-	}
-
-	if len(sectors) == 0 {
-		fastestLap := laps[0]
-		for _, lap := range laps {
-			if lap.Duration < fastestLap.Duration {
-				fastestLap = lap
-			}
-		}
-		return TheoreticalBest{
-			TotalTime:       fastestLap.Duration,
-			TotalDistance:   fastestLap.TotalDistance,
-			DistanceGrid:    fastestLap.DistanceGrid,
-			TimeAtDistance:  fastestLap.TimeAtDistance,
-			SpeedAtDistance: fastestLap.SpeedAtDistance,
-			SectorTimes:     []float64{fastestLap.Duration},
-			SourceLaps:      []int{fastestLap.Index},
-		}
-	}
-
-	numSectors := len(sectors) + 1
-	bestSectorTimes := make([]float64, numSectors)
-	sourceLaps := make([]int, numSectors)
-
-	for i := range bestSectorTimes {
-		bestSectorTimes[i] = math.MaxFloat64
-	}
-
-	for _, lap := range laps {
-		for sectorIdx := 0; sectorIdx < numSectors && sectorIdx < len(lap.SectorTimes); sectorIdx++ {
-			if lap.SectorTimes[sectorIdx] < bestSectorTimes[sectorIdx] {
-				bestSectorTimes[sectorIdx] = lap.SectorTimes[sectorIdx]
-				sourceLaps[sectorIdx] = lap.Index
-			}
-		}
-	}
-
-	totalTime := 0.0
-	for _, t := range bestSectorTimes {
-		if t != math.MaxFloat64 {
-			totalTime += t
-		}
-	}
-
-	return TheoreticalBest{
-		TotalTime:       totalTime,
-		TotalDistance:   laps[0].TotalDistance,
-		SectorTimes:     bestSectorTimes,
-		SourceLaps:      sourceLaps,
-		DistanceGrid:    laps[0].DistanceGrid,
-		TimeAtDistance:  constructTheoreticalTimeTrace(laps, sectors, sourceLaps),
-		SpeedAtDistance: laps[sourceLaps[0]].SpeedAtDistance,
-	}
-}
-
-func constructTheoreticalTimeTrace(laps []LapEvent, sectors []SectorGate, sourceLaps []int) []float64 {
-	if len(laps) == 0 {
-		return []float64{}
-	}
-
-	result := make([]float64, len(laps[0].DistanceGrid))
-	currentTime := 0.0
-	sectorIdx := 0
-	lastDistance := 0.0
-
-	for i, dist := range laps[0].DistanceGrid {
-		if sectorIdx < len(sectors) && dist >= sectors[sectorIdx].Distance {
-			currentTime = 0.0
-			for s := 0; s < sectorIdx; s++ {
-				if sourceLaps[s] < len(laps) && s < len(laps[sourceLaps[s]].SectorTimes) {
-					currentTime += laps[sourceLaps[s]].SectorTimes[s]
-				}
-			}
-			lastDistance = dist
-			sectorIdx++
-		}
-
-		sourceLap := sourceLaps[minInt(sectorIdx, len(sourceLaps)-1)]
-		if sourceLap < len(laps) {
-			lap := laps[sourceLap]
-			if i < len(lap.TimeAtDistance) {
-				distIntoSector := dist - lastDistance
-				result[i] = currentTime + distIntoSector/(lap.AvgSpeed+0.001)
-			}
-		}
-	}
-
-	return result
-}
-
-func calculateTimeSlip(lapA, lapB LapEvent) []map[string]float64 {
-	fmt.Printf("[calculateTimeSlip] Lap A duration: %.3fs, Lap B duration: %.3fs, Difference: %.3fs\n",
-		lapA.Duration, lapB.Duration, lapA.Duration-lapB.Duration)
-	fmt.Printf("[calculateTimeSlip] Lap A total distance: %.1fm, Lap B total distance: %.1fm\n",
-		lapA.TotalDistance, lapB.TotalDistance)
-
-	numSamplePoints := minInt(len(lapA.LatLonTrace), len(lapB.LatLonTrace))
-	sampleInterval := maxInt(1, numSamplePoints/2000)
-
-	var timeSlipPoints []struct {
-		distance float64
-		delta    float64
-	}
-
-	fmt.Printf("[calculateTimeSlip] Using spatial alignment with ~%d sample points (interval: %d)\n",
-		numSamplePoints/sampleInterval, sampleInterval)
-
-	processedIndices := make(map[int]bool)
-
-	alwaysInclude := []int{0, numSamplePoints - 1}
-	for _, idx := range alwaysInclude {
-		if idx >= numSamplePoints || idx >= len(lapA.LatLonTrace) || idx >= len(lapA.RawTimes) {
-			continue
-		}
-
-		posA := lapA.LatLonTrace[idx]
-		closestIdx := findClosestPoint(posA, lapB.LatLonTrace)
-
-		if closestIdx >= len(lapB.RawTimes) {
-			continue
-		}
-
-		spatialDist := haversineDistance(posA[0], posA[1], lapB.LatLonTrace[closestIdx][0], lapB.LatLonTrace[closestIdx][1])
-
-		if spatialDist > 30.0 {
-			continue
-		}
-
-		timeA := lapA.RawTimes[idx]
-		timeB := lapB.RawTimes[closestIdx]
-
-		distA := interpolateDistanceAtRawIndex(lapA, idx)
-		distB := interpolateDistanceAtRawIndex(lapB, closestIdx)
-		avgDist := (distA + distB) / 2.0
-
-		timeSlipPoints = append(timeSlipPoints, struct {
-			distance float64
-			delta    float64
-		}{
-			distance: avgDist,
-			delta:    timeA - timeB,
-		})
-
-		processedIndices[idx] = true
-	}
-
-	for i := 0; i < numSamplePoints; i += sampleInterval {
-		if processedIndices[i] || i >= len(lapA.LatLonTrace) || i >= len(lapA.RawTimes) {
-			continue
-		}
-
-		posA := lapA.LatLonTrace[i]
-		closestIdx := findClosestPoint(posA, lapB.LatLonTrace)
-
-		if closestIdx >= len(lapB.RawTimes) {
-			continue
-		}
-
-		spatialDist := haversineDistance(posA[0], posA[1], lapB.LatLonTrace[closestIdx][0], lapB.LatLonTrace[closestIdx][1])
-
-		if spatialDist > 30.0 {
-			continue
-		}
-
-		timeA := lapA.RawTimes[i]
-		timeB := lapB.RawTimes[closestIdx]
-
-		distA := interpolateDistanceAtRawIndex(lapA, i)
-		distB := interpolateDistanceAtRawIndex(lapB, closestIdx)
-		avgDist := (distA + distB) / 2.0
-
-		timeSlipPoints = append(timeSlipPoints, struct {
-			distance float64
-			delta    float64
-		}{
-			distance: avgDist,
-			delta:    timeA - timeB,
-		})
-	}
-
-	if len(timeSlipPoints) > 0 {
-		fmt.Printf("[calculateTimeSlip] Spatial alignment: %d valid comparison points\n", len(timeSlipPoints))
-		fmt.Printf("[calculateTimeSlip] First delta: %.3fs (at %.1fm), Last delta: %.3fs (at %.1fm)\n",
-			timeSlipPoints[0].delta, timeSlipPoints[0].distance,
-			timeSlipPoints[len(timeSlipPoints)-1].delta, timeSlipPoints[len(timeSlipPoints)-1].distance)
-		if len(timeSlipPoints) > 3 {
-			fmt.Printf("[calculateTimeSlip] Sample at ~25%%, 50%%, 75%%: %.3fs, %.3fs, %.3fs\n",
-				timeSlipPoints[len(timeSlipPoints)/4].delta,
-				timeSlipPoints[len(timeSlipPoints)/2].delta,
-				timeSlipPoints[3*len(timeSlipPoints)/4].delta)
-		}
-	}
-
-	distanceGrid := createDistanceGrid(minFloat(lapA.TotalDistance, lapB.TotalDistance), 1.0)
-
-	rawDeltas := make([]float64, len(distanceGrid))
-	for i, targetDist := range distanceGrid {
-		closestPointIdx := 0
-		minDistDiff := math.MaxFloat64
-		for j, pt := range timeSlipPoints {
-			distDiff := math.Abs(pt.distance - targetDist)
-			if distDiff < minDistDiff {
-				minDistDiff = distDiff
-				closestPointIdx = j
-			}
-		}
-
-		if closestPointIdx < len(timeSlipPoints) {
-			rawDeltas[i] = timeSlipPoints[closestPointIdx].delta
-		}
-	}
-
-	smoothedDeltas := smoothTimeSlip(rawDeltas, 7)
-
-	timeSlip := make([]map[string]float64, len(distanceGrid))
-	for i := 0; i < len(distanceGrid); i++ {
-		timeSlip[i] = map[string]float64{
-			"distance":  distanceGrid[i],
-			"deltaTime": smoothedDeltas[i],
-		}
-	}
-
-	return timeSlip
-}
-
-func interpolateDistanceAtRawIndex(lap LapEvent, rawIdx int) float64 {
-	if rawIdx < 0 || rawIdx >= len(lap.RawTimes) {
-		return 0.0
-	}
-
-	targetTime := lap.RawTimes[rawIdx]
-
-	for i := 1; i < len(lap.TimeAtDistance); i++ {
-		if lap.TimeAtDistance[i] >= targetTime {
-			t1 := lap.TimeAtDistance[i-1]
-			t2 := lap.TimeAtDistance[i]
-			d1 := lap.DistanceGrid[i-1]
-			d2 := lap.DistanceGrid[i]
-
-			if t2 == t1 {
-				return d1
-			}
-
-			ratio := (targetTime - t1) / (t2 - t1)
-			return d1 + ratio*(d2-d1)
-		}
-	}
-
-	if len(lap.DistanceGrid) > 0 {
-		return lap.DistanceGrid[len(lap.DistanceGrid)-1]
-	}
-	return 0.0
-}
-
-func findClosestPoint(target [2]float64, trace [][2]float64) int {
-	minDist := math.MaxFloat64
-	closestIdx := 0
-
-	for i, point := range trace {
-		dist := haversineDistance(target[0], target[1], point[0], point[1])
-		if dist < minDist {
-			minDist = dist
-			closestIdx = i
-		}
-	}
-
-	return closestIdx
-}
-
-func interpolateTimeAtDistance(distanceGrid, timeAtDistance []float64, targetDist float64) float64 {
-	if targetDist <= distanceGrid[0] {
-		return timeAtDistance[0]
-	}
-	if targetDist >= distanceGrid[len(distanceGrid)-1] {
-		return timeAtDistance[len(timeAtDistance)-1]
-	}
-
-	for i := 1; i < len(distanceGrid); i++ {
-		if distanceGrid[i] >= targetDist {
-			d1 := distanceGrid[i-1]
-			d2 := distanceGrid[i]
-			t1 := timeAtDistance[i-1]
-			t2 := timeAtDistance[i]
-
-			ratio := (targetDist - d1) / (d2 - d1)
-			return t1 + ratio*(t2-t1)
-		}
-	}
-
-	return timeAtDistance[len(timeAtDistance)-1]
-}
-
-func minFloat(a, b float64) float64 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func smoothTimeSlip(data []float64, windowSize int) []float64 {
-	if len(data) < windowSize {
-		return data
-	}
-
-	result := make([]float64, len(data))
-	halfWindow := windowSize / 2
-
-	for i := 0; i < len(data); i++ {
-		sum := 0.0
-		count := 0
-
-		for j := maxInt(0, i-halfWindow); j <= minInt(len(data)-1, i+halfWindow); j++ {
-			sum += data[j]
-			count++
-		}
-
-		if count > 0 {
-			result[i] = sum / float64(count)
-		}
-	}
-
-	return result
-}
-
-func calculateTimeSlipAgainstTheoretical(lapA LapEvent, theoretical TheoreticalBest) []map[string]float64 {
-	minDistance := minFloat(lapA.TotalDistance, theoretical.TotalDistance)
-	distanceGrid := createDistanceGrid(minDistance, 5.0)
-
-	rawDeltas := make([]float64, len(distanceGrid))
-	for i := 0; i < len(distanceGrid); i++ {
-		targetDist := distanceGrid[i]
-		timeA := interpolateTimeAtDistance(lapA.DistanceGrid, lapA.TimeAtDistance, targetDist)
-		timeTheo := interpolateTimeAtDistance(theoretical.DistanceGrid, theoretical.TimeAtDistance, targetDist)
-		rawDeltas[i] = timeA - timeTheo
-	}
-
-	smoothedDeltas := smoothTimeSlip(rawDeltas, 3)
-
-	timeSlip := make([]map[string]float64, len(distanceGrid))
-	for i := 0; i < len(distanceGrid); i++ {
-		timeSlip[i] = map[string]float64{
-			"distance":  distanceGrid[i],
-			"deltaTime": smoothedDeltas[i],
-		}
-	}
-
-	return timeSlip
-}
 
 func average(values []float64) float64 {
 	if len(values) == 0 {

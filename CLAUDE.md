@@ -1,223 +1,304 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with code in this repository.
 
 ## Project Overview
 
-MizzouDataTool is a desktop application built with Wails (v2) for analyzing telemetry data from racing/automotive data logs. It features a Go backend for data processing and a React/TypeScript frontend with D3.js visualizations.
+MizzouDataTool is a Wails (v2) desktop app for analyzing racing telemetry data. Go backend + React/TypeScript frontend with D3.js visualizations.
 
-The application processes raw telemetry CSV files, applies data validation and transformations, stores them in a custom binary format (.MRTF), and provides interactive multi-channel time-series graphing with Level of Detail (LOD) optimization for large datasets.
+**Data Flow:** CSV → Telemetry_file (parse/validate) → BTF (.MRTF binary) → Full_graph (LOD+viz) → Tools (analysis)
 
-## Build Commands
+## Quick Commands
 
 ```bash
-# Development mode (live reload)
-wails dev
-
-# Build for production
-wails build
-
-# Frontend only (if needed)
-cd frontend && npm install && npm run build
-
-# Generate Go bindings for frontend (after backend changes)
-wails generate module
+wails dev                  # Development with live reload
+wails build                # Production build
+wails generate module      # Regenerate TypeScript bindings after Go changes
 ```
 
-## Architecture
+## File Navigation Guide
 
-### Backend Structure (Go)
+### When Working On...
 
-The backend is organized into five main components in the `backend/` directory:
+**Data Import/Validation:**
+- Backend: `logFileParser.go`, `DataFileUnification.go`, `StoredFile.go`
+- Frontend: `DataEntryPage.tsx`, `ChannelManagerUnified.tsx`
 
-1. **logFileParser.go** (`Telemetry_file`)
-   - Entry point for loading raw telemetry data
-   - Reads CSV files with format: [names, units, conversion, precision, ...data rows]
-   - Includes native Go implementation for data file unification (no external dependencies)
-   - Handles per-channel operations: validation, unit conversion, unsigned integer overflow correction, range enforcement
-   - Maintains both original and transformed data for reset capability
-   - Methods are called from frontend during data import workflow
+**Graphing/Visualization:**
+- Backend: `GraphAPI.go`, `GraphAPI_multifile.go`
+- Frontend: `GraphsPage.tsx`, `TuneGraph.tsx`, `TimeSeriesLineChart.tsx`
 
-2. **StoredFile.go** (`Basic_telemetry_file`)
-   - Serializes validated telemetry data to custom binary MRTF format
-   - Handles file I/O to/from `DATACACHE/` directory (next to executable)
-   - Acts as bridge between `Telemetry_file` (raw parsing) and `Full_graph` (visualization)
-   - Binary format: magic bytes "MRTF" + version + endianness + name + tags + channels with data
+**Analysis Tools:**
+- Backend: `ToolInterface.go`, `ToolRegistry.go`, `ToolManager.go`, `tools/*.go`
+- Frontend: `ToolsPage.tsx`, `ToolSelector.tsx`, `ToolExecutor.tsx`, `tools/*UI.tsx`
 
-3. **GraphAPI.go** (`Full_graph`)
-   - Core visualization engine with LOD (Level of Detail) system
-   - Generates multiple LOD levels (step sizes: 1, 2, 4, 8, ...) at initialization to keep total points ≤ 25,000
-   - Manages multiple graphs (`Solo_graph`), each containing multiple data channels
-   - Viewport system: dynamically selects appropriate LOD based on time range requested
-   - Supports cursor positioning, break lines, and export markers for data extraction
-   - Thread-safe with mutex locks for concurrent access
-   - Provides raw data extraction via `ExtractRawDataBetweenTimes()` for analysis tools
+**Multi-File Support:**
+- Backend: `GraphAPI_multifile.go`
+- Frontend: `MultiFileManager.tsx`
 
-4. **Tool System** (Interface-based Plugin Architecture)
-   - **ToolInterface.go** - Defines `AnalysisTool` interface for extensible analysis plugins
-   - **ToolRegistry.go** - Global registry pattern for tool discovery and retrieval
-   - **ToolManager.go** - Orchestrates data extraction and tool execution
-   - **DataFragment.go** - Time-bounded data subset extracted from Full_graph for analysis
-   - **tools/** directory - Individual tool implementations (e.g., `XYScatterTool.go`)
+**Presets:**
+- Backend: `PresetManager.go`
+- Frontend: `PresetManagerModal.tsx`, `PresetSuggestionModal.tsx`
 
-5. **Data Export & Fragment System**
-   - Export markers (start/end pairs) placed on timeline in GraphsPage UI
-   - `GetExportMarkerPairs()` uses state machine: "start always starts, end always stops"
-   - `Tool_manager.ExtractFragmentsFromMarkers()` creates `Data_fragment` objects from marker pairs
-   - Fragments contain raw, non-LOD data with all channels for precise analysis
-   - Fragments can be concatenated or analyzed individually via ToolsPage UI
+**Modals/Dialogs:**
+- `AlertModal.tsx`, `ConfirmModal.tsx`, `PromptModal.tsx`
 
-### Data Flow
+### Backend Files (backend/)
 
+| File | Lines | Purpose |
+|------|-------|---------|
+| `logFileParser.go` | 368 | CSV parsing, channel validation, transformations |
+| `DataFileUnification.go` | 518 | Pure Go implementation for unifying multi-file data |
+| `StoredFile.go` | 592 | Binary serialization (.MRTF format), DATACACHE I/O |
+| `GraphAPI.go` | 1,576 | **LARGE** - Core visualization engine, LOD system, viewports |
+| `GraphAPI_multifile.go` | 701 | Multi-file dataset management |
+| `ToolInterface.go` | 19 | `AnalysisTool` interface definition |
+| `ToolRegistry.go` | 47 | Tool registration and discovery |
+| `ToolManager.go` | 293 | Tool orchestration, fragment extraction |
+| `DataFragment.go` | 62 | Time-bounded data subset for analysis |
+| `PresetManager.go` | 435 | Graph preset save/load system |
+
+**tools/** (backend/tools/):
+- `XYScatterTool.go` (324 lines) - X/Y scatter plots
+- `DownforceTool.go` (624 lines) - Downforce analysis
+- `ShiftAnalysisTool.go` (983 lines) - Shift timing analysis
+- `GPSLapTool.go` (1,246 lines) - **LARGE** - GPS lap detection & sectors
+
+### Frontend Files (frontend/src/)
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `main.tsx` | 10 | App entry point |
+| `App.tsx` | 21 | Routing container |
+| `WelcomeScreen.tsx` | 101 | Landing page |
+| `DataEntryPage.tsx` | 1,321 | **LARGE** - Data import workflow |
+| `ChannelManagerUnified.tsx` | 1,205 | **LARGE** - Channel management UI |
+| `GraphsPage.tsx` | 581 | Main graphing interface |
+| `TuneGraph.tsx` | 1,204 | **LARGE** - Graph configuration panel |
+| `TimeSeriesLineChart.tsx` | 845 | D3.js chart rendering |
+| `MultiFileManager.tsx` | 674 | Multi-file dataset UI |
+| `ToolsPage.tsx` | 356 | Analysis tools interface |
+| `ToolSelector.tsx` | 181 | Tool grid display |
+| `ToolExecutor.tsx` | 62 | Tool parameter input & results |
+| `PresetManagerModal.tsx` | 640 | Preset management UI |
+| `PresetSuggestionModal.tsx` | 309 | Auto-suggest presets |
+
+**components/tools/** (frontend/src/components/tools/):
+
+All tool UIs are now **modular** - each tool has been split into a directory structure:
+
+- `XYScatterToolUI.tsx` (1 line) - Re-exports from `XYScatter/`
+- `ShiftAnalysisToolUI.tsx` (1 line) - Re-exports from `ShiftAnalysis/`
+- `DownforceToolUI.tsx` (1 line) - Re-exports from `Downforce/`
+- `GPSLapToolUI.tsx` (1 line) - Re-exports from `GPSLap/`
+
+**Tool Modular Structure** (Pattern used by all tools):
 ```
-Raw CSV → Telemetry_file (parse & validate) → Basic_telemetry_file (serialize) → Full_graph (LOD + visualization)
-                                                                                         ↓
-                                                                            Export Markers (start/end pairs)
-                                                                                         ↓
-                                                                            Tool_manager → Data_fragments
-                                                                                         ↓
-                                                                            AnalysisTool → Tool_result
+ToolName/
+├── types.ts - TypeScript interfaces
+├── utils.ts - Helper functions, presets
+├── ParameterControls.tsx - Channel selectors, settings panel
+├── [Visualization].tsx - D3 chart components (one per viz type)
+├── [Panel].tsx - Results/stats/data panels
+├── PresetsPanel.tsx - Preset management (if applicable)
+├── ToolNameToolUI.tsx - Main orchestrator (300-800 lines)
+└── index.ts - Exports
 ```
 
-**Loading Data:**
-1. Frontend selects directory containing telemetry files
-2. `Telemetry_file.Load_telemetry_file()` reads/unifies CSV data (pure Go, no Python)
-3. User validates channels and applies transformations via frontend
-4. `Basic_telemetry_file.LogFile_to_BTF()` converts validated data
-5. `Basic_telemetry_file.Write_BTF()` persists to .MRTF file
-6. `Full_graph.InitializeFromStoredFile()` loads into graphing engine with pre-computed LOD levels
+**When modifying a tool:**
+- Read ONLY the specific component you need to change
+- Main orchestrator files are 60-80% smaller than original monolithic files
+- Each visualization/panel component is independently testable
+- Types centralized in `types.ts`, utilities in `utils.ts`
 
-**Analyzing Data:**
-1. User places export markers (start/end pairs) on graphs to define regions of interest
-2. Navigate to ToolsPage, which calls `Tool_manager.ExtractFragmentsFromMarkers()`
-3. `Tool_manager` extracts `Data_fragment` objects containing raw data for each marked region
-4. User selects an analysis tool from the registry (e.g., "xy-scatter")
-5. Tool executes on fragment(s), returns `Tool_result` with visualization data and metadata
-6. Frontend renders results (e.g., scatter plots, tables, metrics)
+**Modals:**
+- `AlertModal.tsx` (60 lines), `ConfirmModal.tsx` (86 lines), `PromptModal.tsx` (129 lines)
 
-### Frontend Structure (React + TypeScript)
+## Architecture Quick Reference
 
-Located in `frontend/src/`:
+### Backend Components
 
-- **main.tsx** - Application entry point with React Router setup
-- **App.tsx** - Main routing container
-- **components/**:
-  - `WelcomeScreen.tsx` - Initial landing page
-  - `DataEntryPage.tsx` - Loads raw telemetry, channel validation UI
-  - `GraphsPage.tsx` - Main graphing interface with viewport rendering
-  - `TuneGraph.tsx` - Graph configuration panel
-  - `ChannelManager.tsx` - Manage channel-to-graph assignments
-  - `TimeSeriesLineChart.tsx` - D3.js chart rendering component
-  - `ToolsPage.tsx` - Analysis tools interface with fragment selection
-  - `ToolSelector.tsx` - Grid of available analysis tools
-  - `ToolExecutor.tsx` - Parameter input and result visualization for tools
-  - **tools/** directory - Tool-specific UI components (e.g., `XYScatterToolUI.tsx`)
+1. **Telemetry_file** (`logFileParser.go`)
+   - Loads raw CSV telemetry
+   - Channel validation, unit conversion, overflow correction, range enforcement
+   - Maintains original + transformed data for reset capability
+
+2. **Basic_telemetry_file** (`StoredFile.go`)
+   - Binary MRTF serialization/deserialization
+   - File I/O to `DATACACHE/` directory
+   - Format: "MRTF" magic + version + endian + metadata + channels
+
+3. **Full_graph** (`GraphAPI.go`, `GraphAPI_multifile.go`)
+   - LOD (Level of Detail) visualization engine
+   - Pre-computes LOD levels (1, 2, 4, 8...) at load to keep ≤25k points
+   - Viewport system selects appropriate LOD dynamically
+   - Manages cursors, break lines, export markers
+   - Thread-safe with `sync.RWMutex`
+
+4. **Tool System** (Interface-based plugins)
+   - `ToolInterface.go` - Defines `AnalysisTool` interface
+   - `ToolRegistry.go` - Global registry for discovery
+   - `ToolManager.go` - Extracts fragments, executes tools
+   - `DataFragment.go` - Raw data subset for analysis
+   - `tools/*.go` - Individual tool implementations
+
+5. **Export Markers & Fragments**
+   - Markers placed on timeline (start/end pairs)
+   - State machine: "START always starts, END always stops"
+   - `ExtractFragmentsFromMarkers()` creates `Data_fragment` objects
+   - Fragments contain raw, full-resolution data (no LOD)
 
 ### Wails Bindings
 
-Go backend methods are automatically exposed to frontend via Wails bindings:
+Go methods auto-exposed to TypeScript via `wailsjs/go/`:
 
 ```typescript
-// Generated in frontend/wailsjs/go/
-import { Load_telemetry_file, ValidateChannel } from './wailsjs/go/Backend/Telemetry_file'
+// Generated bindings (regenerate with: wails generate module)
+import { Load_telemetry_file } from './wailsjs/go/Backend/Telemetry_file'
 import { Write_BTF, Read_BTF } from './wailsjs/go/Backend/Basic_telemetry_file'
-import { GetViewportData, AddChannelToGraph } from './wailsjs/go/Backend/Full_graph'
-import { ExtractFragmentsFromMarkers, ExecuteTool, GetAvailableTools } from './wailsjs/go/Backend/Tool_manager'
+import { GetViewportData } from './wailsjs/go/Backend/Full_graph'
+import { ExecuteTool, GetAvailableTools } from './wailsjs/go/Backend/Tool_manager'
 ```
 
-After modifying Go backend structs/methods, regenerate bindings with:
-```bash
-wails generate module
+## Common Tasks
+
+### Adding a New Analysis Tool
+
+1. Create `backend/tools/MyTool.go`:
+   ```go
+   type MyTool struct{}
+   func (t *MyTool) GetName() string { return "my-tool" }
+   func (t *MyTool) GetDescription() string { return "..." }
+   func (t *MyTool) Execute(fragment Backend.Data_fragment, params map[string]interface{}) (Backend.Tool_result, error) {
+       // Tool logic here
+   }
+   func init() { Backend.RegisterTool(&MyTool{}) }
+   ```
+
+2. Ensure `main.go` imports: `_ "MizzouDataTool/backend/tools"`
+
+3. Optionally create `frontend/src/components/tools/MyToolUI.tsx` for custom results display
+
+4. Tool auto-appears in ToolsPage - no manual registration needed!
+
+### Modular Tool Architecture (Context Optimization)
+
+**All analysis tool UIs follow a modular pattern to minimize AI context window usage:**
+
+**File Structure Example (XYScatter):**
+```
+frontend/src/components/tools/
+├── XYScatterToolUI.tsx (1 line) - Re-exports from ./XYScatter
+└── XYScatter/
+    ├── types.ts (37 lines) - All interfaces
+    ├── utils.ts (143 lines) - Presets, export, helpers
+    ├── DataInfoPanel.tsx (84 lines) - Statistics sidebar
+    ├── PresetsPanel.tsx (118 lines) - Preset management
+    ├── ParameterControls.tsx (364 lines) - Channel selectors
+    ├── ScatterChart.tsx (419 lines) - D3.js visualization
+    ├── XYScatterToolUI.tsx (445 lines) - Main orchestrator
+    └── index.ts (2 lines) - Exports
 ```
 
-The `main.go` file binds all backend components to the Wails runtime:
-```go
-Bind: []interface{}{
-    app,
-    logFileParser,      // Telemetry_file
-    storedFileManager,  // Basic_telemetry_file
-    tuneGraph,          // Full_graph
-    toolManager,        // Tool_manager
-}
+**Context Savings:**
+- Original: 1,390 lines (read entire file for any change)
+- Modular: Read only what you need (84-445 lines depending on task)
+- **Average 70% reduction** in context usage
+
+**When Working On Tools:**
+- **Fixing a chart bug?** Read only `[Tool]Chart.tsx` (200-700 lines)
+- **Adding preset feature?** Read `PresetsPanel.tsx` + `utils.ts` (~250 lines)
+- **Changing parameters?** Read `ParameterControls.tsx` (200-680 lines)
+- **Refactoring main logic?** Read `[Tool]ToolUI.tsx` (300-800 lines)
+
+**Pattern for All Tools:**
+1. **types.ts** - All TypeScript interfaces (keep centralized)
+2. **utils.ts** - Pure functions (no React dependencies)
+3. **ParameterControls.tsx** - Input panel with channel selectors
+4. **[Visualization].tsx** - D3/chart components (one per visualization type)
+5. **[Panel].tsx** - Results, stats, or data display panels
+6. **PresetsPanel.tsx** - Preset management UI
+7. **[Tool]ToolUI.tsx** - Main component (state + orchestration)
+8. **index.ts** - Clean exports
+
+**Tool-Specific Notes:**
+- **XYScatter** (8 files): Simple scatter plot with color channel
+- **ShiftAnalysis** (10 files): 3 separate D3 charts (Upshift, Downshift, Pressure)
+- **Downforce** (8 files): Advanced time-series with LOD downsampling
+- **GPSLap** (12 files): GPS map (reusable), lap replay, metrics panels
+
+**Re-Export Pattern:**
+All original `[Tool]ToolUI.tsx` files now simply:
+```typescript
+export { default } from './ToolName';
+```
+This maintains backward compatibility with existing imports.
+
+### Modifying Graph Behavior
+
+- **Viewport/LOD logic:** `GraphAPI.go` - `selectLODLevel()`, `GetViewportData()`
+- **Adding channels:** `GraphAPI.go` - `AddChannelToGraph()`, `RemoveChannelFromGraph()`
+- **Export markers:** `GraphAPI.go` - `AddExportMarker()`, `GetExportMarkerPairs()`
+- **Frontend rendering:** `TimeSeriesLineChart.tsx` - D3.js chart component
+
+### Data Import Workflow
+
+1. User selects directory → `Load_telemetry_file()` (Go)
+2. Channels displayed → User validates via `DataEntryPage.tsx`
+3. Apply transformations → Unit conversion, overflow correction, range enforcement
+4. `LogFile_to_BTF()` + `Write_BTF()` → Save to .MRTF file
+5. `InitializeFromStoredFile()` → Load into Full_graph with LOD pre-computation
+
+## Critical Rules
+
+### UI/UX Standards
+
+**NEVER use `window.alert()`, `window.confirm()`, or `window.prompt()`** - These create ugly browser dialogs with "wails://wails" in title bar.
+
+**ALWAYS use custom modals:**
+
+```typescript
+// Alert
+import AlertModal from './AlertModal';
+const [alertModal, setAlertModal] = useState({ isOpen: false, title: '', message: '' });
+setAlertModal({ isOpen: true, title: 'Error', message: 'Failed' });
+<AlertModal {...alertModal} onClose={() => setAlertModal({ ...alertModal, isOpen: false })} />
+
+// Confirm
+import ConfirmModal from './ConfirmModal';
+const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', message: '', onConfirm: () => {} });
+setConfirmModal({ isOpen: true, title: 'Delete?', message: 'Sure?', onConfirm: () => { /* action */ } });
+<ConfirmModal {...confirmModal} onCancel={() => setConfirmModal({ ...confirmModal, isOpen: false })} />
+
+// Prompt
+import PromptModal from './PromptModal';
+const [promptModal, setPromptModal] = useState({ isOpen: false, title: '', message: '', onConfirm: (v: string) => {} });
+setPromptModal({ isOpen: true, title: 'Name?', message: 'Enter:', onConfirm: (v) => { /* use v */ } });
+<PromptModal {...promptModal} onCancel={() => setPromptModal({ ...promptModal, isOpen: false })} />
 ```
 
-## Key Technical Details
+### Key Technical Details
 
-### LOD System (Visualization)
-- Pre-computes LOD levels at file load to avoid runtime calculation
-- Each channel stores multiple `LOD_data_line` with step sizes (1=full, 2=half, 4=quarter, etc.)
-- `selectLODLevel()` chooses coarsest LOD that keeps points under 25k for viewport
-- Includes 10% buffer on viewport edges for smooth panning
-- **LOD is ONLY used for visualization** - analysis tools receive raw, full-resolution data
+- **LOD is visualization-only** - Tools always receive raw, full-resolution data
+- **Channels must be validated** - `is_Validated = true` before MRTF export
+- **"Time" channel is special** - Primary timestamp source throughout codebase
+- **Thread safety** - `Full_graph` and `Tool_manager` use mutexes, respect lock patterns
+- **Export marker state machine** - "START always starts, END always stops"
+- **Graph Y-axis padding** - Auto-calculated with 10% buffer
+- **No external dependencies** - Self-contained, pure Go/React (no Python)
+- **Minimal comments** - Only comment when strictly necessary
 
-### Custom Binary Format (.MRTF)
-- "Mizzou Racing Telemetry Format"
+### Data Format (.MRTF)
+
+"Mizzou Racing Telemetry Format" - Custom binary format
 - Little-endian encoding
 - Structure: Magic(4) + Version(1) + Endian(1) + Name + Tags + Channels(name, unit, conv, data[])
 - Stored in `DATACACHE/` next to executable
 
-### Data Validation Features
-- **Channel validation**: Mark channels as validated before export
-- **Unit conversion**: Apply/modify conversion factors, recalculate from original data
-- **Unsigned overflow correction**: Detect and fix uint8/16/32 wraparound errors
-- **Range enforcement**: Clamp values and interpolate out-of-range points
+## Development Tips
 
-### Tool System Design Philosophy
-
-**Separation of Concerns:**
-- Tools are **completely independent** from the data they analyze
-- Each tool implements the `AnalysisTool` interface with 3 methods: `GetName()`, `GetDescription()`, `Execute()`
-- Tools receive `Data_fragment` objects containing raw data, parameters map, and return `Tool_result`
-- No direct coupling between tools and `Full_graph`, `Telemetry_file`, or storage systems
-
-**Plugin Architecture:**
-- Tools auto-register via `init()` function when their package is imported
-- Registry pattern (`ToolRegistry.go`) enables dynamic tool discovery
-- Adding new tools: Create file in `backend/tools/`, implement interface, import package in `main.go`
-- Frontend automatically discovers tools via `GetAvailableTools()` - no UI changes needed
-
-**Data Independence:**
-- `Data_fragment` is a standalone, time-bounded subset of telemetry data
-- Contains ALL channels with raw values (no LOD) plus timestamps
-- Fragments can be extracted from any time range via export markers
-- Multiple fragments can be concatenated for multi-region analysis
-- Tools operate on fragments in isolation - they don't know about the broader dataset
-
-**Example Tool Flow:**
-1. User creates `XYScatterTool` in `backend/tools/XYScatterTool.go`
-2. Tool registers itself: `Backend.RegisterTool(&XYScatterTool{})`
-3. Frontend calls `GetAvailableTools()` and displays tool in UI
-4. User selects tool, provides params: `{xChannel: "Speed", yChannel: "Throttle"}`
-5. `ExecuteTool()` called with fragment ID and params
-6. Tool generates scatter plot data, returns `Tool_result` with metadata
-7. Frontend renders result using tool-specific UI component
-
-## Development Workflow
-
-1. **Backend changes**: Modify Go files → Run `wails generate module` → Update frontend TypeScript
-2. **Frontend changes**: Edit React components → Auto-reload in `wails dev`
-3. **Adding new analysis tools**:
-   - Create `backend/tools/MyNewTool.go` implementing `AnalysisTool` interface
-   - Add `init()` function that calls `Backend.RegisterTool(&MyNewTool{})`
-   - Ensure `main.go` imports the tools package: `_ "MizzouDataTool/backend/tools"`
-   - Optionally create frontend UI component in `frontend/src/components/tools/MyNewToolUI.tsx`
-   - Tool will automatically appear in ToolsPage without UI code changes
-4. **Testing**: Use example data in `exampleData/` directory
-5. **Building**: `wails build` creates executable in `build/bin/`
-
-## Dependencies
-
-**No external runtime dependencies** - The application is fully self-contained:
-- Data file unification is implemented natively in Go (no Python required)
-- All analysis tools are built-in Go code
-- Binary executables include embedded frontend assets
-
-## Important Notes
-
-- Channels must be validated (`is_Validated = true`) before being included in MRTF export
-- "Time" channel is special-cased throughout codebase as primary timestamp source
-- Graph Y-ranges are auto-calculated with 10% padding
-- Empty graphs are automatically removed when last channel is removed
-- Thread safety: `Full_graph` and `Tool_manager` use `sync.RWMutex` - respect lock patterns when adding methods
-- Export markers use state machine logic: "START always starts parsing, END always stops"
-- Fragments are cleared when navigating back to GraphsPage from ToolsPage
+- **Context window optimization:** Large files marked with **LARGE** - only read when necessary
+- **After Go changes:** Run `wails generate module` to update TypeScript bindings
+- **Auto-reload:** Use `wails dev` for frontend hot-reload
+- **Test data:** Use files in `exampleData/` directory
+- **Build output:** `wails build` → `build/bin/`

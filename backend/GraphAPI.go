@@ -12,18 +12,18 @@ import (
 const MAX_POINTS_ON_SCREEN int = 15000
 
 type File_metadata struct {
-	ID              string   `json:"id"`
-	OriginalPath    string   `json:"originalPath"`
-	OriginalName    string   `json:"originalName"`
-	DisplayName     string   `json:"displayName"`
-	OriginalStart   float64  `json:"originalStart"`
-	OriginalEnd     float64  `json:"originalEnd"`
-	AdjustedStart   float64  `json:"adjustedStart"`
-	AdjustedEnd     float64  `json:"adjustedEnd"`
-	TimeOffset      float64  `json:"timeOffset"`
-	DataPointCount  int      `json:"dataPointCount"`
-	ChannelNames    []string `json:"channelNames"`
-	Order           int      `json:"order"`
+	ID             string   `json:"id"`
+	OriginalPath   string   `json:"originalPath"`
+	OriginalName   string   `json:"originalName"`
+	DisplayName    string   `json:"displayName"`
+	OriginalStart  float64  `json:"originalStart"`
+	OriginalEnd    float64  `json:"originalEnd"`
+	AdjustedStart  float64  `json:"adjustedStart"`
+	AdjustedEnd    float64  `json:"adjustedEnd"`
+	TimeOffset     float64  `json:"timeOffset"`
+	DataPointCount int      `json:"dataPointCount"`
+	ChannelNames   []string `json:"channelNames"`
+	Order          int      `json:"order"`
 }
 
 type Full_graph struct {
@@ -95,9 +95,9 @@ type Viewport_response struct {
 	ExportStarts []int `json:"exportStarts"`
 	ExportEnds   []int `json:"exportEnds"`
 
-	FileBoundaryIndices []int                  `json:"fileBoundaryIndices"`
+	FileBoundaryIndices []int                 `json:"fileBoundaryIndices"`
 	FileBoundaryLabels  []File_boundary_label `json:"fileBoundaryLabels"`
-	FileMetadataList    []File_metadata        `json:"fileMetadataList"`
+	FileMetadataList    []File_metadata       `json:"fileMetadataList"`
 
 	LODStep       int     `json:"lodStep"`
 	TotalPoints   int     `json:"totalPoints"`
@@ -220,9 +220,7 @@ func (fg *Full_graph) InitializeFromStoredFile() error {
 		len(fg.stored_file_manager.Channels), dataLength)
 
 	fg.FullTimeStamps = make([]float64, dataLength)
-	for i, v := range fg.stored_file_manager.Channels["Time"].Data {
-		fg.FullTimeStamps[i] = v
-	}
+	copy(fg.FullTimeStamps, fg.stored_file_manager.Channels["Time"].Data)
 
 	maxLODStep := fg.calculateMaxLODStep(dataLength, channelsPerGraph)
 	fmt.Printf("[GraphAPI] Channels per graph: %d\n", channelsPerGraph)
