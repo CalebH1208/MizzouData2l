@@ -5,13 +5,18 @@ import (
 	"sync"
 )
 
+type GraphDataProvider interface {
+	ExtractRawDataBetweenTimes(startTime, endTime float64) (*Data_fragment, error)
+	GetExportMarkerPairs() ([][2]float64, error)
+}
+
 type Tool_manager struct {
-	fullGraph *Full_graph
+	fullGraph GraphDataProvider
 	fragments map[string]*Data_fragment
 	mutex     sync.RWMutex
 }
 
-func New_tool_manager(fullGraph *Full_graph) *Tool_manager {
+func New_tool_manager(fullGraph GraphDataProvider) *Tool_manager {
 	return &Tool_manager{
 		fullGraph: fullGraph,
 		fragments: make(map[string]*Data_fragment),

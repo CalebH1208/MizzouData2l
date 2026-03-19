@@ -10,9 +10,9 @@ import {
   RegenerateChannelColor,
   SetGraphTitle,
   LoadGraphConfiguration,
-} from '../../wailsjs/go/Backend/Full_graph';
+} from '../../wailsjs/go/graph/Full_graph';
 import { NotifyGraphRefresh } from '../../wailsjs/go/main/App';
-import { Backend } from '../../wailsjs/go/models';
+import { graph } from '../../wailsjs/go/models';
 import * as PresetManager from '../utils/PresetManager';
 import ConfirmDialog from './ConfirmDialog';
 import PopUpDialog from './PopUp';
@@ -30,8 +30,8 @@ const ChannelManagerUnified: React.FC<ChannelManagerUnifiedProps> = ({
   onViewportRestore,
   onPresetsUpdate
 }) => {
-  const [channels, setChannels] = useState<Backend.Channel_info[]>([]);
-  const [metadata, setMetadata] = useState<Backend.Graph_metadata | null>(null);
+  const [channels, setChannels] = useState<graph.Channel_info[]>([]);
+  const [metadata, setMetadata] = useState<graph.Graph_metadata | null>(null);
   const [loading, setLoading] = useState(false);
 
   const [presets, setPresets] = useState<PresetManager.GraphPreset[]>([]);

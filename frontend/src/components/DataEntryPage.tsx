@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SetName, Load_telemetry_file, GetAllChannelNames, GetAllChannelUnvalidatedNames, GetData, ValidateChannel, UnvalidateChannel, SetConversion,GetConversion,SetUnit,GetUnit, DetectAndCorrectUnsignedErrors, ResetDefaults, EnforceRange, SetNegation, GetNegation, ApplyPresetToChannel } from "../../wailsjs/go/backend/Telemetry_file"
 import { LogFile_to_BTF, Write_BTF, Read_BTF, LoadMRTFForEditing } from  "../../wailsjs/go/backend/Basic_telemetry_file"
-import { PreviewValidationChannel } from "../../wailsjs/go/Backend/Full_graph"
+import { PreviewValidationChannel } from "../../wailsjs/go/graph/Full_graph"
 import { FindMatchingPresets, GetAllPresets } from "../../wailsjs/go/Backend/Preset_manager"
 import { LogPrint, } from "../../wailsjs/runtime/runtime"
 import { OpenDirectoryDialog, OpenFileDialog } from "../../wailsjs/go/main/App"

@@ -2,6 +2,7 @@ package Backend_test
 
 import (
 	Backend "MizzouDataTool/backend"
+	"MizzouDataTool/backend/graph"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,7 +29,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 			Unit:         "unit",
 			Conversion:   1.0,
 			OriginalConv: 1.0,
-			is_Validated: true,
+			Is_Validated: true,
 			Data:         data,
 			OriginalData: data,
 		})
@@ -56,7 +57,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 
 	// Verify channel data matches original
 	for _, originalCh := range parser.Channels {
-		if !originalCh.is_Validated {
+		if !originalCh.Is_Validated {
 			continue
 		}
 		storedCh, exists := btf.Channels[originalCh.Name]
@@ -98,7 +99,7 @@ func TestConcurrentLODGeneration(t *testing.T) {
 		Unit:         "s",
 		Conversion:   1.0,
 		OriginalConv: 1.0,
-		is_Validated: true,
+		Is_Validated: true,
 		Data:         timeData,
 		OriginalData: timeData,
 	})
@@ -117,7 +118,7 @@ func TestConcurrentLODGeneration(t *testing.T) {
 			Unit:         "unit",
 			Conversion:   1.0,
 			OriginalConv: 1.0,
-			is_Validated: true,
+			Is_Validated: true,
 			Data:         data,
 			OriginalData: data,
 		})
@@ -128,7 +129,7 @@ func TestConcurrentLODGeneration(t *testing.T) {
 	btf.LogFile_to_BTF()
 
 	// Create Full_graph and test concurrent LOD generation
-	fg := Backend.New_full_graph(btf)
+	fg := graph.New_full_graph(btf)
 	err := fg.InitializeFromStoredFile()
 	if err != nil {
 		t.Fatalf("InitializeFromStoredFile failed: %v", err)

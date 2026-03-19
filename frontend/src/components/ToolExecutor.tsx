@@ -4,6 +4,7 @@ import XYScatterToolUI from './tools/XYScatterToolUI';
 import DownforceToolUI from './tools/DownforceToolUI';
 import ShiftAnalysisToolUI from './tools/ShiftAnalysisToolUI';
 import GPSLapToolUI from './tools/GPSLapToolUI';
+import DataExportToolUI from './tools/DataExportToolUI';
 
 interface ToolExecutorProps {
   fragment: Backend.Data_fragment;
@@ -26,6 +27,8 @@ const ToolExecutor: React.FC<ToolExecutorProps> = ({
         return <ShiftAnalysisToolUI fragment={fragment} />;
       case 'gps-lap-analysis':
         return <GPSLapToolUI fragment={fragment} />;
+      case 'data-export':
+        return <DataExportToolUI fragment={fragment} />;
       default:
         return (
           <div style={{

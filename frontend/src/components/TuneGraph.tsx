@@ -1,8 +1,11 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as d3 from 'd3';
-import { GetGraphMetadata, GetViewportData, SetCursorPosition, GetCursorData, AddExportMarker, RemoveExportMarker } from '../../wailsjs/go/Backend/Full_graph';
-import { Backend } from '../../wailsjs/go/models';
+import { GetGraphMetadata, GetViewportData, SetCursorPosition, GetCursorData, AddExportMarker, RemoveExportMarker, AddNote, EditNote, DeleteNote, DeleteSegment } from '../../wailsjs/go/graph/Full_graph';
+import { graph } from '../../wailsjs/go/models';
 import { EventsOn, EventsOff, EventsEmit } from '../../wailsjs/runtime/runtime';
+import SelectionMenu from './SelectionMenu';
+import NotePanel from './NotePanel';
+import ConfirmDialog from './ConfirmDialog';
 
 // Sanitize channel name for use in CSS class selector
 function sanitizeClassName(name: string): string {
@@ -40,8 +43,8 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const [metadata, setMetadata] = useState<Backend.Graph_metadata | null>(null);
-  const [viewportData, setViewportData] = useState<Backend.Viewport_response | null>(null);
+  const [metadata, setMetadata] = useState<graph.Graph_metadata | null>(null);
+  const [viewportData, setViewportData] = useState<graph.Viewport_response | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,9 +57,33 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{x: number, y: number, time: number} | null>(null);
+  const contextMenuRef = useRef<{x: number, y: number, time: number} | null>(null);
+  useEffect(() => { contextMenuRef.current = contextMenu; }, [contextMenu]);
 
-  // Drag state for cursor movement
-  const [isDragging, setIsDragging] = useState(false);
+  // Drag state for cursor movement — ref so mouse handlers never need it in dep array
+  const isDraggingRef = useRef(false);
+
+  // Drag-select state
+  const [dragSelect, setDragSelect] = useState<{startTime: number, endTime: number} | null>(null);
+  const isDragSelectingRef = useRef(false);
+  const dragSelectStartTimeRef = useRef<number | null>(null);
+
+  // Refs so mouse handlers always read current values without being in the dep array
+  const viewportStartRef = useRef<number>(0);
+  const viewportEndRef = useRef<number>(0);
+  const viewportDataRef = useRef<typeof viewportData>(null);
+  const marginLeftRef = useRef<number>(0);
+  const chartWidthRef = useRef<number>(0);
+  useEffect(() => { viewportStartRef.current = viewportStart; }, [viewportStart]);
+  useEffect(() => { viewportEndRef.current = viewportEnd; }, [viewportEnd]);
+  useEffect(() => { viewportDataRef.current = viewportData; }, [viewportData]);
+
+  // Selection menu, delete confirm, note panel
+  const [selectionMenu, setSelectionMenu] = useState<{x: number, y: number, start: number, end: number} | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{start: number, end: number} | null>(null);
+  const [notePanel, setNotePanel] = useState<{start: number, end: number, existingId?: string} | null>(null);
+  // Note icon positions computed by D3, rendered as React overlays so clicks are stable
+  const [noteIcons, setNoteIcons] = useState<Array<{id: string, x: number, y: number, title: string, startTime: number, endTime: number}>>([]);
 
   // Responsive dimensions - simplified approach following D3 patterns
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
@@ -68,7 +95,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       await AddExportMarker(time, true);
       setContextMenu(null);
       // Reload viewport data to show the new marker
-      const req: Backend.Viewport_request = {
+      const req: graph.Viewport_request = {
         startTime: viewportStart,
         endTime: viewportEnd
       };
@@ -84,7 +111,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       await AddExportMarker(time, false);
       setContextMenu(null);
       // Reload viewport data to show the new marker
-      const req: Backend.Viewport_request = {
+      const req: graph.Viewport_request = {
         startTime: viewportStart,
         endTime: viewportEnd
       };
@@ -100,7 +127,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       await RemoveExportMarker(time, true);
       setContextMenu(null);
       // Reload viewport data to update
-      const req: Backend.Viewport_request = {
+      const req: graph.Viewport_request = {
         startTime: viewportStart,
         endTime: viewportEnd
       };
@@ -116,7 +143,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       await RemoveExportMarker(time, false);
       setContextMenu(null);
       // Reload viewport data to update
-      const req: Backend.Viewport_request = {
+      const req: graph.Viewport_request = {
         startTime: viewportStart,
         endTime: viewportEnd
       };
@@ -187,6 +214,10 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
   const chartWidth = Math.max(0, width - margin.left - margin.right);
   const chartHeight = Math.max(0, height - margin.top - margin.bottom);
 
+  // Keep layout refs in sync (placed here after margin/chartWidth are declared)
+  useEffect(() => { marginLeftRef.current = margin.left; }, [margin.left]);
+  useEffect(() => { chartWidthRef.current = chartWidth; }, [chartWidth]);
+
   // Visual properties that scale with screen size
   const fontSize = Math.max(10, Math.round(8 * baseScale));
   const strokeWidth = Math.max(1.5, baseScale);
@@ -221,7 +252,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
   const throttledLoadViewportData = useRef(
     throttle(async (startTime: number, endTime: number) => {
       try {
-        const request: Backend.Viewport_request = {
+        const request: graph.Viewport_request = {
           startTime,
           endTime,
         };
@@ -561,6 +592,21 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       }
     });
 
+    // Pink drag-select highlight
+    if (dragSelect && dragSelect.endTime > dragSelect.startTime) {
+      const selX1 = xScale(Math.max(dragSelect.startTime, viewportStart));
+      const selX2 = xScale(Math.min(dragSelect.endTime, viewportEnd));
+      if (selX2 > selX1) {
+        svg.append('rect')
+          .attr('x', margin.left + selX1)
+          .attr('y', margin.top)
+          .attr('width', selX2 - selX1)
+          .attr('height', chartHeight)
+          .attr('fill', 'rgba(255, 20, 100, 0.20)')
+          .attr('pointer-events', 'none');
+      }
+    }
+
     // Create a clipped group for vertical lines (cursor, markers, boundaries)
     const verticalLinesGroup = svg.append('g')
       .attr('clip-path', 'url(#chart-clip)')
@@ -667,6 +713,46 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       });
     }
 
+    // Note highlights and icons
+    const computedIcons: Array<{id: string, x: number, y: number, title: string, startTime: number, endTime: number}> = [];
+    if (viewportData.notes && viewportData.notes.length > 0) {
+      viewportData.notes.forEach(note => {
+        const noteVisStart = Math.max(note.startTime, viewportStart);
+        const noteVisEnd = Math.min(note.endTime, viewportEnd);
+        // Still render icon even if note range is off-screen (clamp to viewport edge)
+        const nx1 = xScale(Math.max(note.startTime, viewportStart));
+        const nx2 = xScale(Math.min(note.endTime, viewportEnd));
+        const sectionWidth = nx2 - nx1;
+
+        if (noteVisEnd > noteVisStart) {
+          // Light blue background highlight
+          verticalLinesGroup.append('rect')
+            .attr('x', nx1)
+            .attr('y', 0)
+            .attr('width', Math.max(0, sectionWidth))
+            .attr('height', chartHeight)
+            .attr('fill', 'rgba(65, 105, 225, 0.15)')
+            .attr('pointer-events', 'none');
+        }
+
+        // Always compute icon position (even for tiny/off-screen ranges)
+        const rawIconX = margin.left + (noteVisEnd > noteVisStart ? nx1 + sectionWidth / 2 : (note.startTime < viewportStart ? 0 : chartWidth));
+        const iconY = margin.top + chartHeight - 14;
+        computedIcons.push({ id: note.id, x: rawIconX, y: iconY, title: note.title || '', startTime: note.startTime, endTime: note.endTime });
+      });
+
+      // Only push icons apart when they physically overlap (circle radius = 10px).
+      // Don't reposition based on title width — at low zoom titles naturally overlap
+      // and that's acceptable; displacing icons from their data range is worse.
+      computedIcons.sort((a, b) => a.x - b.x);
+      for (let i = 1; i < computedIcons.length; i++) {
+        if (computedIcons[i].x - computedIcons[i - 1].x < 20) {
+          computedIcons[i].x = computedIcons[i - 1].x + 20;
+        }
+      }
+    }
+    setNoteIcons(computedIcons);
+
     // X axis (at bottom)
     svg.append('g')
       .attr('transform', `translate(${margin.left}, ${height - margin.bottom})`)
@@ -684,7 +770,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       .attr('font-size', `${fontSize}px`)
       .text('Time (s)');
 
-  }, [viewportData, metadata, chartWidth, chartHeight, height, width, margin.top, margin.left, margin.right, margin.bottom, cursorTime, cursorData, fontSize, strokeWidth, pointRadius, cursorStrokeWidth, forceRender]);
+  }, [viewportData, metadata, chartWidth, chartHeight, height, width, margin.top, margin.left, margin.right, margin.bottom, cursorTime, cursorData, fontSize, strokeWidth, pointRadius, cursorStrokeWidth, forceRender, dragSelect, viewportStart, viewportEnd, setNotePanel]);
 
   // Handle zoom (scroll)
   const handleWheel = useCallback((event: WheelEvent) => {
@@ -788,24 +874,21 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
     };
   }, [handleWheel]);
 
-  // Helper function to snap and set cursor position
+  // Helper function to snap and set cursor position — uses refs so it never changes identity
   const snapAndSetCursor = useCallback((clientX: number) => {
-    if (!containerRef.current || !viewportData) return;
+    if (!containerRef.current || !viewportDataRef.current) return;
 
     const rect = containerRef.current.getBoundingClientRect();
-    const xWithin = clientX - rect.left - margin.left;
-    if (xWithin < 0 || xWithin > chartWidth) return;
+    const xWithin = clientX - rect.left - marginLeftRef.current;
+    if (xWithin < 0 || xWithin > chartWidthRef.current) return;
 
-    // Use requested viewport bounds to match the rendering scale
     const xScale = d3.scaleLinear()
-      .domain([viewportStart, viewportEnd])
-      .range([0, chartWidth]);
+      .domain([viewportStartRef.current, viewportEndRef.current])
+      .range([0, chartWidthRef.current]);
     const t = xScale.invert(xWithin);
 
-    // snap to nearest timestamp in current viewport
-    const ts = viewportData.timestamps;
+    const ts = viewportDataRef.current.timestamps;
     if (!ts || ts.length === 0) return;
-    // binary search for nearest
     let left = 0, right = ts.length - 1;
     while (left < right) {
       const mid = Math.floor((left + right) / 2);
@@ -818,36 +901,74 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
     }
     const snapped = Number(ts[idx]);
     setCursorTime(snapped);
-    // inform backend (will snap to full-res internally)
     try { SetCursorPosition(snapped); } catch {}
-  }, [viewportData, viewportStart, viewportEnd, margin.left, chartWidth]);
+  }, []);
 
   // Left-click and drag to set/move cursor
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || !viewportData) return;
+    if (!container) return;
+
+    const timeFromClientX = (clientX: number): number => {
+      const rect = container.getBoundingClientRect();
+      const xWithin = clientX - rect.left - marginLeftRef.current;
+      const clamped = Math.max(0, Math.min(chartWidthRef.current, xWithin));
+      const xScale = d3.scaleLinear().domain([viewportStartRef.current, viewportEndRef.current]).range([0, chartWidthRef.current]);
+      return xScale.invert(clamped);
+    };
 
     const onMouseDown = (e: MouseEvent) => {
-      if (e.button !== 0) return; // left-click only
-
-      // Don't move cursor if context menu is open
-      if (contextMenu !== null) return;
+      if (e.button !== 0) return;
+      if (contextMenuRef.current !== null) return;
+      if (!viewportDataRef.current) return;
 
       const rect = container.getBoundingClientRect();
-      const xWithin = e.clientX - rect.left - margin.left;
-      if (xWithin < 0 || xWithin > chartWidth) return;
+      const xWithin = e.clientX - rect.left - marginLeftRef.current;
+      if (xWithin < 0 || xWithin > chartWidthRef.current) return;
 
-      setIsDragging(true);
+      if (e.shiftKey) {
+        isDragSelectingRef.current = true;
+        const t = timeFromClientX(e.clientX);
+        dragSelectStartTimeRef.current = t;
+        setDragSelect({ startTime: t, endTime: t });
+        return;
+      }
+
+      isDraggingRef.current = true;
       snapAndSetCursor(e.clientX);
     };
 
     const onMouseMove = (e: MouseEvent) => {
-      if (!isDragging) return;
+      if (isDragSelectingRef.current && dragSelectStartTimeRef.current !== null) {
+        const t = timeFromClientX(e.clientX);
+        const start = Math.min(dragSelectStartTimeRef.current, t);
+        const end = Math.max(dragSelectStartTimeRef.current, t);
+        setDragSelect({ startTime: start, endTime: end });
+        return;
+      }
+      if (!isDraggingRef.current) return;
       snapAndSetCursor(e.clientX);
     };
 
-    const onMouseUp = () => {
-      setIsDragging(false);
+    const onMouseUp = (e: MouseEvent) => {
+      if (isDragSelectingRef.current) {
+        isDragSelectingRef.current = false;
+        const t = timeFromClientX(e.clientX);
+        const startT = dragSelectStartTimeRef.current ?? t;
+        dragSelectStartTimeRef.current = null;
+        const start = Math.min(startT, t);
+        const end = Math.max(startT, t);
+        if (end - start > 0.001) {
+          const menuWidth = 260;
+          const menuX = e.clientX + menuWidth > window.innerWidth ? window.innerWidth - menuWidth : e.clientX;
+          setSelectionMenu({ x: menuX, y: e.clientY, start, end });
+          setDragSelect({ startTime: start, endTime: end });
+        } else {
+          setDragSelect(null);
+        }
+        return;
+      }
+      isDraggingRef.current = false;
     };
 
     container.addEventListener('mousedown', onMouseDown);
@@ -859,7 +980,8 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
-  }, [viewportData, margin.left, chartWidth, contextMenu, isDragging, snapAndSetCursor]);
+  // metadata in deps ensures the effect re-runs once the real chart container is mounted
+  }, [snapAndSetCursor, metadata]);
 
   // Right-click to open context menu for export markers
   useEffect(() => {
@@ -1055,6 +1177,47 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
         </div>
       )}
 
+      {/* Note icons rendered as React overlays so clicks are stable across D3 re-renders */}
+      {noteIcons.map(icon => (
+        <div
+          key={icon.id}
+          onClick={() => setNotePanel({ start: icon.startTime, end: icon.endTime, existingId: icon.id })}
+          style={{
+            position: 'absolute',
+            left: icon.x,
+            top: icon.y,
+            transform: 'translate(-50%, -50%)',
+            width: 20,
+            height: 20,
+            borderRadius: '50%',
+            backgroundColor: '#4169E1',
+            border: '1px solid #8aabff',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 100,
+          }}
+        >
+          <span style={{ color: 'white', fontSize: 11, fontWeight: 'bold', lineHeight: 1, userSelect: 'none' }}>i</span>
+          {icon.title && (
+            <span style={{
+              position: 'absolute',
+              top: '100%',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              marginTop: 12,
+              color: '#8aabff',
+              fontSize: 12,
+              fontWeight: 'bold',
+              whiteSpace: 'nowrap',
+              pointerEvents: 'none',
+              userSelect: 'none',
+            }}>{icon.title}</span>
+          )}
+        </div>
+      ))}
+
       {/* Context menu for export markers */}
       {contextMenu && viewportData && (
         <div
@@ -1197,6 +1360,108 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
             Time: {contextMenu.time.toFixed(3)} ms
           </div>
         </div>
+      )}
+
+      {/* Drag-select popup menu */}
+      {selectionMenu && (
+        <SelectionMenu
+          x={selectionMenu.x}
+          y={selectionMenu.y}
+          startTime={selectionMenu.start}
+          endTime={selectionMenu.end}
+          onDelete={(start, end) => {
+            setDeleteConfirm({ start, end });
+          }}
+          onNote={(start, end) => {
+            setNotePanel({ start, end });
+            setDragSelect(null);
+            setSelectionMenu(null);
+          }}
+          onClose={() => {
+            setSelectionMenu(null);
+            setDragSelect(null);
+          }}
+        />
+      )}
+
+      {/* Delete range confirmation */}
+      {deleteConfirm && (
+        <ConfirmDialog
+          title="Delete Range"
+          message={`Delete data from ${deleteConfirm.start.toFixed(3)}s to ${deleteConfirm.end.toFixed(3)}s?\n\nThe deleted data will be stored in the file and can be recovered via Undo.`}
+          confirmText="Delete"
+          cancelText="Cancel"
+          confirmColor="#CC2222"
+          onConfirm={async () => {
+            const { start, end } = deleteConfirm;
+            setDeleteConfirm(null);
+            setDragSelect(null);
+            setSelectionMenu(null);
+            try {
+              await DeleteSegment(start, end);
+              EventsEmit('unsaved-changes', true);
+              const newMeta = await GetGraphMetadata();
+              setMetadata(newMeta);
+              // Stay at current viewport — clamp to new data bounds if needed
+              if (newMeta?.timeRange) {
+                const clampedStart = Math.max(viewportStart, newMeta.timeRange[0]);
+                const clampedEnd = Math.min(viewportEnd, newMeta.timeRange[1]);
+                const safeStart = clampedStart < clampedEnd ? clampedStart : newMeta.timeRange[0];
+                const safeEnd = clampedStart < clampedEnd ? clampedEnd : newMeta.timeRange[1];
+                setViewportStart(safeStart);
+                setViewportEnd(safeEnd);
+                const req: graph.Viewport_request = { startTime: safeStart, endTime: safeEnd };
+                const data = await GetViewportData(req);
+                setViewportData(data);
+              }
+            } catch (err) {
+              console.error('Delete segment failed:', err);
+            }
+          }}
+          onCancel={() => {
+            setDeleteConfirm(null);
+            setDragSelect(null);
+            setSelectionMenu(null);
+          }}
+        />
+      )}
+
+      {/* Note editor panel */}
+      {notePanel && (
+        <NotePanel
+          startTime={notePanel.start}
+          endTime={notePanel.end}
+          existingId={notePanel.existingId}
+          onSave={async (title, body) => {
+            try {
+              if (notePanel.existingId) {
+                await EditNote(notePanel.existingId, title, body);
+              } else {
+                await AddNote(notePanel.start, notePanel.end, title, body);
+              }
+              EventsEmit('unsaved-changes', true);
+              const req: graph.Viewport_request = { startTime: viewportStart, endTime: viewportEnd };
+              const data = await GetViewportData(req);
+              setViewportData(data);
+            } catch (err) {
+              console.error('Save note failed:', err);
+            }
+            setNotePanel(null);
+          }}
+          onDelete={notePanel.existingId ? async () => {
+            try {
+              await DeleteNote(notePanel.existingId!);
+              EventsEmit('unsaved-changes', true);
+              const req: graph.Viewport_request = { startTime: viewportStart, endTime: viewportEnd };
+              const data = await GetViewportData(req);
+              setViewportData(data);
+            } catch (err) {
+              console.error('Delete note failed:', err);
+            }
+            setNotePanel(null);
+          } : undefined}
+          onClose={() => setNotePanel(null)}
+        />
       )}
     </div>
   );

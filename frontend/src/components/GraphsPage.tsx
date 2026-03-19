@@ -4,13 +4,22 @@ import { Read_BTF } from '../../wailsjs/go/backend/Basic_telemetry_file'
 import {
   InitializeFromStoredFile,
   GetAvailableChannels,
-  LoadGraphConfiguration
-} from '../../wailsjs/go/Backend/Full_graph'
+  LoadGraphConfiguration,
+  UndoOperation,
+  RedoOperation,
+  SaveChanges,
+  ResetToOriginal,
+  GetCanUndo,
+  GetCanRedo,
+  GetCanReset,
+} from '../../wailsjs/go/graph/Full_graph'
 import { ExtractFragmentsFromMarkers, GetAllFragments } from '../../wailsjs/go/Backend/Tool_manager'
 import { OpenFileDialog } from "../../wailsjs/go/main/App"
 import TuneGraph from './TuneGraph';
 import ChannelManagerUnified from './ChannelManagerUnified';
 import MultiFileManager from './MultiFileManager';
+import AlertModal from './AlertModal';
+import ConfirmModal from './ConfirmModal';
 import { LogPrint, EventsOn, EventsEmit } from '../../wailsjs/runtime/runtime';
 import * as PresetManager from '../utils/PresetManager';
 
@@ -38,6 +47,18 @@ const [showMultiFileManager, setShowMultiFileManager] = useState(false);
 const [currentViewportStart, setCurrentViewportStart] = useState<number>(0);
 const [currentViewportEnd, setCurrentViewportEnd] = useState<number>(0);
 const [presets, setPresets] = useState<PresetManager.GraphPreset[]>([]);
+const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+const [canUndo, setCanUndo] = useState(false);
+const [canRedo, setCanRedo] = useState(false);
+const [canReset, setCanReset] = useState(false);
+const [alertModal, setAlertModal] = useState({ isOpen: false, title: '', message: '' });
+const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', message: '', onConfirm: () => {} });
+
+const refreshEditState = async () => {
+  setCanUndo(await GetCanUndo());
+  setCanRedo(await GetCanRedo());
+  setCanReset(await GetCanReset());
+};
 
 const globalViewportRef = useRef<{ start: number; end: number } | null>(null);
 
@@ -73,6 +94,7 @@ const globalViewportRef = useRef<{ start: number; end: number } | null>(null);
         await InitializeFromStoredFile();
 
         setGraphUpdateTrigger(prev => prev + 1);
+        await refreshEditState();
       } catch(e) {
         LogPrint(`Error loading graph data: ${e}`)
       }
@@ -111,6 +133,7 @@ const globalViewportRef = useRef<{ start: number; end: number } | null>(null);
     const unsubscribeMultiFile = EventsOn('multi-file-loaded', () => {
       LogPrint('Multi-file data loaded, updating graph state');
       setGraphUpdateTrigger(prev => prev + 1);
+      refreshEditState();
     });
 
     // Listen for viewport updates from TuneGraph
@@ -124,13 +147,81 @@ const globalViewportRef = useRef<{ start: number; end: number } | null>(null);
       }
     });
 
+    const unsubscribeUnsaved = EventsOn('unsaved-changes', (val: boolean) => {
+      setHasUnsavedChanges(val);
+      refreshEditState();
+    });
+
     // Cleanup function to unsubscribe when component unmounts
     return () => {
       if (unsubscribe) unsubscribe();
       if (unsubscribeMultiFile) unsubscribeMultiFile();
       if (unsubscribeViewport) unsubscribeViewport();
+      if (unsubscribeUnsaved) unsubscribeUnsaved();
     };
   }, []);
+
+  const handleUndo = async () => {
+    if (!canUndo) return;
+    try {
+      await UndoOperation();
+      EventsEmit('graph-refresh');
+      setHasUnsavedChanges(true);
+      await refreshEditState();
+    } catch (err) {
+      setAlertModal({ isOpen: true, title: 'Undo', message: String(err) });
+    }
+  };
+
+  const handleRedo = async () => {
+    if (!canRedo) return;
+    try {
+      await RedoOperation();
+      EventsEmit('graph-refresh');
+      setHasUnsavedChanges(true);
+      await refreshEditState();
+    } catch (err) {
+      setAlertModal({ isOpen: true, title: 'Redo', message: String(err) });
+    }
+  };
+
+  const handleSaveChanges = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Save Changes',
+      message: 'Save will write all deletions and notes to the file.\n\nNote: Undo/Redo history is cleared on save. The original pre-edit data is preserved in the file and can always be restored using the "Reset to Original" button.',
+      onConfirm: async () => {
+        setConfirmModal(m => ({ ...m, isOpen: false }));
+        try {
+          await SaveChanges();
+          setHasUnsavedChanges(false);
+          await refreshEditState();
+          setAlertModal({ isOpen: true, title: 'Saved', message: 'Changes saved successfully.' });
+        } catch (err) {
+          setAlertModal({ isOpen: true, title: 'Save Failed', message: String(err) });
+        }
+      },
+    });
+  };
+
+  const handleResetToOriginal = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Reset to Original',
+      message: 'This will restore all data to the original state from when the file was first imported — including all deleted segments.\n\nNotes are preserved.\n\nYou will still need to Save Changes afterwards to write the reset to disk.',
+      onConfirm: async () => {
+        setConfirmModal(m => ({ ...m, isOpen: false }));
+        try {
+          await ResetToOriginal();
+          EventsEmit('graph-refresh');
+          setHasUnsavedChanges(true);
+          await refreshEditState();
+        } catch (err) {
+          setAlertModal({ isOpen: true, title: 'Reset Failed', message: String(err) });
+        }
+      },
+    });
+  };
 
   const handleViewportRestore = (start: number, end: number) => {
     EventsEmit('viewport-restore', { start, end });
@@ -397,6 +488,82 @@ const globalViewportRef = useRef<{ start: number; end: number } | null>(null);
         >
           Analysis Tools
         </button>
+
+        <button
+          onClick={handleUndo}
+          disabled={!canUndo}
+          style={{
+            backgroundColor: canUndo ? '#333333' : '#1e1e1e',
+            color: canUndo ? '#cccccc' : '#555555',
+            border: `2px solid ${canUndo ? '#555555' : '#333333'}`,
+            borderRadius: '6px',
+            padding: '6px 12px',
+            fontSize: '13px',
+            fontWeight: 'bold',
+            cursor: canUndo ? 'pointer' : 'not-allowed',
+            flexShrink: 0,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Undo
+        </button>
+
+        <button
+          onClick={handleRedo}
+          disabled={!canRedo}
+          style={{
+            backgroundColor: canRedo ? '#333333' : '#1e1e1e',
+            color: canRedo ? '#cccccc' : '#555555',
+            border: `2px solid ${canRedo ? '#555555' : '#333333'}`,
+            borderRadius: '6px',
+            padding: '6px 12px',
+            fontSize: '13px',
+            fontWeight: 'bold',
+            cursor: canRedo ? 'pointer' : 'not-allowed',
+            flexShrink: 0,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Redo
+        </button>
+
+        <button
+          onClick={hasUnsavedChanges ? handleSaveChanges : undefined}
+          disabled={!hasUnsavedChanges}
+          style={{
+            backgroundColor: hasUnsavedChanges ? '#22AA44' : '#1e1e1e',
+            color: hasUnsavedChanges ? '#ffffff' : '#555555',
+            border: `2px solid ${hasUnsavedChanges ? '#22AA44' : '#333333'}`,
+            borderRadius: '6px',
+            padding: '6px 14px',
+            fontSize: '13px',
+            fontWeight: 'bold',
+            cursor: hasUnsavedChanges ? 'pointer' : 'not-allowed',
+            flexShrink: 0,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Save Changes
+        </button>
+
+        <button
+          onClick={canReset ? handleResetToOriginal : undefined}
+          disabled={!canReset}
+          style={{
+            backgroundColor: canReset ? '#CC4400' : '#1e1e1e',
+            color: canReset ? '#ffffff' : '#555555',
+            border: `2px solid ${canReset ? '#CC4400' : '#333333'}`,
+            borderRadius: '6px',
+            padding: '6px 14px',
+            fontSize: '13px',
+            fontWeight: 'bold',
+            cursor: canReset ? 'pointer' : 'not-allowed',
+            flexShrink: 0,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Reset to Original
+        </button>
       </div>
 
       {/* Chart area */}
@@ -572,6 +739,22 @@ const globalViewportRef = useRef<{ start: number; end: number } | null>(null);
       <MultiFileManager
         isOpen={showMultiFileManager}
         onClose={() => setShowMultiFileManager(false)}
+      />
+
+      <AlertModal
+        isOpen={alertModal.isOpen}
+        title={alertModal.title}
+        message={alertModal.message}
+        onClose={() => setAlertModal({ ...alertModal, isOpen: false })}
+      />
+
+      <ConfirmModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        onConfirm={confirmModal.onConfirm}
+        onCancel={() => setConfirmModal(m => ({ ...m, isOpen: false }))}
+        confirmText="Confirm"
       />
 
     </div>

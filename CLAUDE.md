@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
@@ -14,6 +14,7 @@ MizzouDataTool is a Wails (v2) desktop app for analyzing racing telemetry data. 
 wails dev                  # Development with live reload
 wails build                # Production build
 wails generate module      # Regenerate TypeScript bindings after Go changes
+go test ./test/...         # Run backend tests
 ```
 
 ## File Navigation Guide
@@ -25,94 +26,112 @@ wails generate module      # Regenerate TypeScript bindings after Go changes
 - Frontend: `DataEntryPage.tsx`, `ChannelManagerUnified.tsx`
 
 **Graphing/Visualization:**
-- Backend: `GraphAPI.go`, `GraphAPI_multifile.go`
+- Backend: `graph/graph_types.go`, `graph/graph_init.go`, `graph/graph_channels.go`, `graph/graph_utils.go`, `graph/graph_viewport.go`
 - Frontend: `GraphsPage.tsx`, `TuneGraph.tsx`, `TimeSeriesLineChart.tsx`
+
+**Editing (notes, segments, undo/redo):**
+- Backend: `graph/edit_notes.go`, `graph/edit_save.go`, `graph/edit_segments.go`, `graph/edit_undoredo.go`
+- Frontend: `NotePanel.tsx`
 
 **Analysis Tools:**
 - Backend: `ToolInterface.go`, `ToolRegistry.go`, `ToolManager.go`, `tools/*.go`
 - Frontend: `ToolsPage.tsx`, `ToolSelector.tsx`, `ToolExecutor.tsx`, `tools/*UI.tsx`
 
 **Multi-File Support:**
-- Backend: `GraphAPI_multifile.go`
+- Backend: `graph/multifile_init.go`, `graph/multifile_manage.go`
 - Frontend: `MultiFileManager.tsx`
+
+**Shared Types:**
+- Backend: `types/types.go` (Note_entry, Stored_channel, File_metadata, etc.)
+
+**Cloud/Local File Management:**
+- Backend: `CloudStorage.go`, `LocalFileManager.go`, `SyncState.go`
+- Frontend: `FileManagerModal.tsx`, `components/filemanager/`
 
 **Presets:**
 - Backend: `PresetManager.go`
 - Frontend: `PresetManagerModal.tsx`, `PresetSuggestionModal.tsx`
-
-**Modals/Dialogs:**
-- `AlertModal.tsx`, `ConfirmModal.tsx`, `PromptModal.tsx`
 
 ### Backend Files (backend/)
 
 | File | Lines | Purpose |
 |------|-------|---------|
 | `logFileParser.go` | 368 | CSV parsing, channel validation, transformations |
-| `DataFileUnification.go` | 518 | Pure Go implementation for unifying multi-file data |
-| `StoredFile.go` | 592 | Binary serialization (.MRTF format), DATACACHE I/O |
-| `GraphAPI.go` | 1,576 | **LARGE** - Core visualization engine, LOD system, viewports |
-| `GraphAPI_multifile.go` | 701 | Multi-file dataset management |
+| `DataFileUnification.go` | 518 | Pure Go for unifying multi-file data |
+| `StoredFile.go` | 904 | Binary serialization (.MRTF format), DATACACHE I/O |
 | `ToolInterface.go` | 19 | `AnalysisTool` interface definition |
 | `ToolRegistry.go` | 47 | Tool registration and discovery |
 | `ToolManager.go` | 293 | Tool orchestration, fragment extraction |
 | `DataFragment.go` | 62 | Time-bounded data subset for analysis |
 | `PresetManager.go` | 435 | Graph preset save/load system |
+| `CloudStorage.go` | 536 | AWS S3 upload/download via `cloud_config.json` |
+| `LocalFileManager.go` | 207 | Local DATACACHE filesystem browsing |
+| `SyncState.go` | 97 | Tracks cloud↔local sync state (`.cloud_sync_state.json`) |
+
+**types/** (backend/types/):
+- `types.go` — Shared types: `Stored_channel`, `Note_entry`, `Deleted_segment`, `Change_op`, `TimeMutation`, `File_metadata`, `Note_viewport`
+
+**graph/** (backend/graph/):
+| File | Lines | Purpose |
+|------|-------|---------|
+| `graph_types.go` | ~165 | `Full_graph` struct, graph-specific type definitions |
+| `graph_init.go` | ~188 | Constructor, LOD pre-computation |
+| `graph_channels.go` | ~605 | Add/remove/manage channels on graph |
+| `graph_utils.go` | ~534 | LOD selection, helpers, export markers |
+| `graph_viewport.go` | ~217 | `GetViewportData()` — viewport + LOD serving |
+| `multifile_init.go` | ~286 | Multi-file dataset initialization |
+| `multifile_manage.go` | ~392 | Multi-file reorder, append, metadata |
+| `edit_notes.go` | ~115 | Notes/annotations (async save) |
+| `edit_save.go` | ~201 | Save-state helpers, reset to original |
+| `edit_segments.go` | ~231 | Segment deletion (with pre-delete snapshots) |
+| `edit_undoredo.go` | ~314 | Undo/redo stack |
 
 **tools/** (backend/tools/):
-- `XYScatterTool.go` (324 lines) - X/Y scatter plots
-- `DownforceTool.go` (624 lines) - Downforce analysis
-- `ShiftAnalysisTool.go` (983 lines) - Shift timing analysis
-- `GPSLapTool.go` (1,246 lines) - **LARGE** - GPS lap detection & sectors
+- `XYScatterTool.go` - X/Y scatter plots
+- `DownforceTool.go` - Downforce analysis
+- `ShiftAnalysisTool.go` - Shift timing analysis
+- `GPSLapTool.go` - **LARGE** - GPS lap detection & sectors
+- `DataExportTool.go` - Data export to CSV/file
 
-### Frontend Files (frontend/src/)
+### Frontend Files (frontend/src/components/)
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `main.tsx` | 10 | App entry point |
-| `App.tsx` | 21 | Routing container |
-| `WelcomeScreen.tsx` | 101 | Landing page |
 | `DataEntryPage.tsx` | 1,321 | **LARGE** - Data import workflow |
 | `ChannelManagerUnified.tsx` | 1,205 | **LARGE** - Channel management UI |
-| `GraphsPage.tsx` | 581 | Main graphing interface |
-| `TuneGraph.tsx` | 1,204 | **LARGE** - Graph configuration panel |
+| `TuneGraph.tsx` | 1,469 | **LARGE** - Graph configuration panel |
 | `TimeSeriesLineChart.tsx` | 845 | D3.js chart rendering |
+| `GraphsPage.tsx` | 764 | Main graphing interface |
 | `MultiFileManager.tsx` | 674 | Multi-file dataset UI |
+| `PresetManagerModal.tsx` | 640 | Preset management UI |
+| `FileManagerModal.tsx` | 283 | Cloud + local file browser modal |
+| `NotePanel.tsx` | 225 | Notes/annotations sidebar |
+| `PresetSuggestionModal.tsx` | 309 | Auto-suggest presets |
 | `ToolsPage.tsx` | 356 | Analysis tools interface |
 | `ToolSelector.tsx` | 181 | Tool grid display |
-| `ToolExecutor.tsx` | 62 | Tool parameter input & results |
-| `PresetManagerModal.tsx` | 640 | Preset management UI |
-| `PresetSuggestionModal.tsx` | 309 | Auto-suggest presets |
 
-**components/tools/** (frontend/src/components/tools/):
+**filemanager/** (frontend/src/components/filemanager/):
+- `CloudPane.tsx`, `LocalPane.tsx` - Two-pane file browser
+- `FileTree.tsx`, `TransferProgress.tsx`, `CloudSetupModal.tsx`, `types.ts`
 
-All tool UIs are now **modular** - each tool has been split into a directory structure:
-
-- `XYScatterToolUI.tsx` (1 line) - Re-exports from `XYScatter/`
-- `ShiftAnalysisToolUI.tsx` (1 line) - Re-exports from `ShiftAnalysis/`
-- `DownforceToolUI.tsx` (1 line) - Re-exports from `Downforce/`
-- `GPSLapToolUI.tsx` (1 line) - Re-exports from `GPSLap/`
+**tools/** (frontend/src/components/tools/) — all modular:
+- `XYScatter/`, `ShiftAnalysis/`, `Downforce/`, `GPSLap/`, `DataExport/`
+- Each `[Tool]ToolUI.tsx` at the top level is a 1-line re-export
 
 **Tool Modular Structure** (Pattern used by all tools):
 ```
 ToolName/
-├── types.ts - TypeScript interfaces
-├── utils.ts - Helper functions, presets
+├── types.ts              - TypeScript interfaces
+├── utils.ts              - Helper functions, presets
 ├── ParameterControls.tsx - Channel selectors, settings panel
-├── [Visualization].tsx - D3 chart components (one per viz type)
-├── [Panel].tsx - Results/stats/data panels
-├── PresetsPanel.tsx - Preset management (if applicable)
-├── ToolNameToolUI.tsx - Main orchestrator (300-800 lines)
-└── index.ts - Exports
+├── [Visualization].tsx   - D3 chart components (one per viz type)
+├── [Panel].tsx           - Results/stats/data panels
+├── PresetsPanel.tsx      - Preset management (if applicable)
+├── ToolNameToolUI.tsx    - Main orchestrator (300-800 lines)
+└── index.ts              - Exports
 ```
 
-**When modifying a tool:**
-- Read ONLY the specific component you need to change
-- Main orchestrator files are 60-80% smaller than original monolithic files
-- Each visualization/panel component is independently testable
-- Types centralized in `types.ts`, utilities in `utils.ts`
-
-**Modals:**
-- `AlertModal.tsx` (60 lines), `ConfirmModal.tsx` (86 lines), `PromptModal.tsx` (129 lines)
+**When modifying a tool:** Read only the specific component you need — types in `types.ts`, helpers in `utils.ts`, charts in `[Visualization].tsx`.
 
 ## Architecture Quick Reference
 
@@ -128,19 +147,20 @@ ToolName/
    - File I/O to `DATACACHE/` directory
    - Format: "MRTF" magic + version + endian + metadata + channels
 
-3. **Full_graph** (`GraphAPI.go`, `GraphAPI_multifile.go`)
+3. **Full_graph** (in `backend/graph/` package, split across `graph_*.go`, `multifile_*.go`, `edit_*.go`)
    - LOD (Level of Detail) visualization engine
-   - Pre-computes LOD levels (1, 2, 4, 8...) at load to keep ≤25k points
-   - Viewport system selects appropriate LOD dynamically
-   - Manages cursors, break lines, export markers
-   - Thread-safe with `sync.RWMutex`
+   - Pre-computes LOD levels (1, 2, 4, 8...) at load to keep ≤15,000 points on screen (`MAX_POINTS_ON_SCREEN = 15000`)
+   - Viewport system selects appropriate LOD dynamically (`graph/graph_viewport.go`)
+   - Manages cursors, break lines, export markers (`graph/graph_utils.go`)
+   - Notes, segment editing, undo/redo in `edit_*.go`
+   - Thread-safe with `sync.RWMutex` (`mutex`) + separate `fileMutex` for file I/O
 
 4. **Tool System** (Interface-based plugins)
    - `ToolInterface.go` - Defines `AnalysisTool` interface
    - `ToolRegistry.go` - Global registry for discovery
    - `ToolManager.go` - Extracts fragments, executes tools
    - `DataFragment.go` - Raw data subset for analysis
-   - `tools/*.go` - Individual tool implementations
+   - `tools/*.go` - Individual tool implementations (auto-registered via `init()`)
 
 5. **Export Markers & Fragments**
    - Markers placed on timeline (start/end pairs)
@@ -148,16 +168,24 @@ ToolName/
    - `ExtractFragmentsFromMarkers()` creates `Data_fragment` objects
    - Fragments contain raw, full-resolution data (no LOD)
 
+6. **Cloud Storage** (`CloudStorage.go`)
+   - AWS S3 integration via `cloud_config.json` (credentials file, not committed)
+   - Upload/download with transfer progress events to frontend
+   - `SyncState.go` tracks downloaded files in `DATACACHE/.cloud_sync_state.json`
+
 ### Wails Bindings
 
-Go methods auto-exposed to TypeScript via `wailsjs/go/`:
+All structs in `main.go`'s `Bind` slice are auto-exposed to TypeScript via `wailsjs/go/`:
 
 ```typescript
 // Generated bindings (regenerate with: wails generate module)
 import { Load_telemetry_file } from './wailsjs/go/Backend/Telemetry_file'
 import { Write_BTF, Read_BTF } from './wailsjs/go/Backend/Basic_telemetry_file'
-import { GetViewportData } from './wailsjs/go/Backend/Full_graph'
+import { GetViewportData } from './wailsjs/go/graph/Full_graph'  // graph package
 import { ExecuteTool, GetAvailableTools } from './wailsjs/go/Backend/Tool_manager'
+import { ListCloudFiles, UploadFile } from './wailsjs/go/Backend/Cloud_storage'
+// Model namespaces: Backend (tools/presets), graph (viewport/channel types), types (shared types)
+import { Backend, graph, types } from './wailsjs/go/models'
 ```
 
 ## Common Tasks
@@ -175,70 +203,17 @@ import { ExecuteTool, GetAvailableTools } from './wailsjs/go/Backend/Tool_manage
    func init() { Backend.RegisterTool(&MyTool{}) }
    ```
 
-2. Ensure `main.go` imports: `_ "MizzouDataTool/backend/tools"`
+2. `main.go` already imports `_ "MizzouDataTool/backend/tools"` — no change needed.
 
-3. Optionally create `frontend/src/components/tools/MyToolUI.tsx` for custom results display
+3. Optionally create `frontend/src/components/tools/MyTool/` directory with modular structure.
 
-4. Tool auto-appears in ToolsPage - no manual registration needed!
-
-### Modular Tool Architecture (Context Optimization)
-
-**All analysis tool UIs follow a modular pattern to minimize AI context window usage:**
-
-**File Structure Example (XYScatter):**
-```
-frontend/src/components/tools/
-├── XYScatterToolUI.tsx (1 line) - Re-exports from ./XYScatter
-└── XYScatter/
-    ├── types.ts (37 lines) - All interfaces
-    ├── utils.ts (143 lines) - Presets, export, helpers
-    ├── DataInfoPanel.tsx (84 lines) - Statistics sidebar
-    ├── PresetsPanel.tsx (118 lines) - Preset management
-    ├── ParameterControls.tsx (364 lines) - Channel selectors
-    ├── ScatterChart.tsx (419 lines) - D3.js visualization
-    ├── XYScatterToolUI.tsx (445 lines) - Main orchestrator
-    └── index.ts (2 lines) - Exports
-```
-
-**Context Savings:**
-- Original: 1,390 lines (read entire file for any change)
-- Modular: Read only what you need (84-445 lines depending on task)
-- **Average 70% reduction** in context usage
-
-**When Working On Tools:**
-- **Fixing a chart bug?** Read only `[Tool]Chart.tsx` (200-700 lines)
-- **Adding preset feature?** Read `PresetsPanel.tsx` + `utils.ts` (~250 lines)
-- **Changing parameters?** Read `ParameterControls.tsx` (200-680 lines)
-- **Refactoring main logic?** Read `[Tool]ToolUI.tsx` (300-800 lines)
-
-**Pattern for All Tools:**
-1. **types.ts** - All TypeScript interfaces (keep centralized)
-2. **utils.ts** - Pure functions (no React dependencies)
-3. **ParameterControls.tsx** - Input panel with channel selectors
-4. **[Visualization].tsx** - D3/chart components (one per visualization type)
-5. **[Panel].tsx** - Results, stats, or data display panels
-6. **PresetsPanel.tsx** - Preset management UI
-7. **[Tool]ToolUI.tsx** - Main component (state + orchestration)
-8. **index.ts** - Clean exports
-
-**Tool-Specific Notes:**
-- **XYScatter** (8 files): Simple scatter plot with color channel
-- **ShiftAnalysis** (10 files): 3 separate D3 charts (Upshift, Downshift, Pressure)
-- **Downforce** (8 files): Advanced time-series with LOD downsampling
-- **GPSLap** (12 files): GPS map (reusable), lap replay, metrics panels
-
-**Re-Export Pattern:**
-All original `[Tool]ToolUI.tsx` files now simply:
-```typescript
-export { default } from './ToolName';
-```
-This maintains backward compatibility with existing imports.
+4. Tool auto-appears in ToolsPage.
 
 ### Modifying Graph Behavior
 
-- **Viewport/LOD logic:** `GraphAPI.go` - `selectLODLevel()`, `GetViewportData()`
-- **Adding channels:** `GraphAPI.go` - `AddChannelToGraph()`, `RemoveChannelFromGraph()`
-- **Export markers:** `GraphAPI.go` - `AddExportMarker()`, `GetExportMarkerPairs()`
+- **Viewport/LOD logic:** `graph/graph_viewport.go` - `GetViewportData()`, `graph/graph_utils.go` - `selectLODLevel()`
+- **Adding/removing channels:** `graph/graph_channels.go` - `AddChannelToGraph()`, `RemoveChannelFromGraph()`
+- **Export markers:** `graph/graph_utils.go` - `AddExportMarker()`, `GetExportMarkerPairs()`
 - **Frontend rendering:** `TimeSeriesLineChart.tsx` - D3.js chart component
 
 ### Data Import Workflow
@@ -253,7 +228,7 @@ This maintains backward compatibility with existing imports.
 
 ### UI/UX Standards
 
-**NEVER use `window.alert()`, `window.confirm()`, or `window.prompt()`** - These create ugly browser dialogs with "wails://wails" in title bar.
+**NEVER use `window.alert()`, `window.confirm()`, or `window.prompt()`** — These create ugly browser dialogs with "wails://wails" in title bar.
 
 **ALWAYS use custom modals:**
 
@@ -279,26 +254,26 @@ setPromptModal({ isOpen: true, title: 'Name?', message: 'Enter:', onConfirm: (v)
 
 ### Key Technical Details
 
-- **LOD is visualization-only** - Tools always receive raw, full-resolution data
-- **Channels must be validated** - `is_Validated = true` before MRTF export
-- **"Time" channel is special** - Primary timestamp source throughout codebase
-- **Thread safety** - `Full_graph` and `Tool_manager` use mutexes, respect lock patterns
-- **Export marker state machine** - "START always starts, END always stops"
-- **Graph Y-axis padding** - Auto-calculated with 10% buffer
-- **No external dependencies** - Self-contained, pure Go/React (no Python)
-- **Minimal comments** - Only comment when strictly necessary
+- **LOD is visualization-only** — Tools always receive raw, full-resolution data
+- **Channels must be validated** — `Is_Validated = true` before MRTF export
+- **"Time" channel is special** — Primary timestamp source throughout codebase
+- **Thread safety** — `Full_graph` uses two mutexes: `mutex` (RWMutex for data) and `fileMutex` (Mutex for file I/O). Never hold both simultaneously from different goroutines.
+- **Export marker state machine** — "START always starts, END always stops"
+- **Graph Y-axis padding** — Auto-calculated with 10% buffer
+- **Minimal comments** — Only comment when strictly necessary
+- **`cloud_config.json`** — Not committed; contains AWS credentials. Must be present in DATACACHE for cloud features to work.
 
 ### Data Format (.MRTF)
 
-"Mizzou Racing Telemetry Format" - Custom binary format
+"Mizzou Racing Telemetry Format" — Custom binary format
 - Little-endian encoding
 - Structure: Magic(4) + Version(1) + Endian(1) + Name + Tags + Channels(name, unit, conv, data[])
 - Stored in `DATACACHE/` next to executable
 
 ## Development Tips
 
-- **Context window optimization:** Large files marked with **LARGE** - only read when necessary
 - **After Go changes:** Run `wails generate module` to update TypeScript bindings
 - **Auto-reload:** Use `wails dev` for frontend hot-reload
 - **Test data:** Use files in `exampleData/` directory
+- **Tests:** Located in `test/` directory; run with `go test ./test/...`
 - **Build output:** `wails build` → `build/bin/`

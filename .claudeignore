@@ -1,0 +1,66 @@
+# Build outputs and generated files
+build/
+dist/
+frontend/build/
+frontend/dist/
+frontend/wailsjs/
+wailsjs/
+
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Data files - exclude actual data but allow example structure
+DATACACHE/
+*.MRTF
+*.csv
+
+# Test directories
+tests/
+*.test.ts
+*.test.tsx
+*.test.go
+*_test.go
+
+# Minified/compiled frontend assets
+*.min.js
+*.min.css
+*.bundle.js
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Temporary files
+nul
+*.log
+*.tmp
+*.temp
+
+# Git files
+.git/
+.gitignore
+
+# Package lock files (keep package.json though)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# OS files
+Thumbs.db
+desktop.ini
+
+# Wails specific
+.wails/
+wails.json
+
+# Go vendor (if used)
+vendor/

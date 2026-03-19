@@ -1,6 +1,7 @@
 package Backend
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"errors"
@@ -9,22 +10,28 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"unsafe"
+
+	"MizzouDataTool/backend/types"
 )
 
-type Stored_channel struct {
-	Unit string
-	Conv float64
-	Data []float64
-}
-
 type Basic_telemetry_file struct {
-	parser   *Telemetry_file
+	Parser   *Telemetry_file
 	Name     string
 	Tags     []string
-	Channels map[string]Stored_channel
+	Channels map[string]types.Stored_channel
+
+	Notes           []types.Note_entry
+	DeletedSegments []types.Deleted_segment
+	ChangeLog       []types.Change_op
+	TimeMutations   []types.TimeMutation
+
+	// OriginalChannels holds the full-resolution data from the very first import.
+	// Written once to the ORIG section and never overwritten by subsequent saves.
+	OriginalChannels map[string]types.Stored_channel
 }
 
-func writeString(w io.Writer, s string) error {
+func WriteString(w io.Writer, s string) error {
 	if err := binary.Write(w, binary.LittleEndian, uint32(len(s))); err != nil {
 		return err
 	}
@@ -50,24 +57,46 @@ func readString(r io.Reader) (string, error) {
 	return string(buf), nil
 }
 
+// writeFloat64Slice writes a []float64 as raw little-endian bytes in one shot.
+// ~100x faster than calling binary.Write per element.
+func writeFloat64Slice(w io.Writer, data []float64) error {
+	if len(data) == 0 {
+		return nil
+	}
+	// Reinterpret the float64 slice as a byte slice without copying.
+	byteSlice := unsafe.Slice((*byte)(unsafe.Pointer(&data[0])), len(data)*8)
+	_, err := w.Write(byteSlice)
+	return err
+}
+
+// readFloat64Slice reads n float64 values from r directly into a pre-allocated slice.
+func readFloat64Slice(r io.Reader, data []float64) error {
+	if len(data) == 0 {
+		return nil
+	}
+	byteSlice := unsafe.Slice((*byte)(unsafe.Pointer(&data[0])), len(data)*8)
+	_, err := io.ReadFull(r, byteSlice)
+	return err
+}
+
 func New_BTF(fileParser *Telemetry_file) *Basic_telemetry_file {
 	return &Basic_telemetry_file{
-		parser:   fileParser,
+		Parser:   fileParser,
 		Name:     "",
 		Tags:     nil,
-		Channels: make(map[string]Stored_channel),
+		Channels: make(map[string]types.Stored_channel),
 	}
 }
 
 func (B *Basic_telemetry_file) LogFile_to_BTF() {
-	B.Name = B.parser.Name
-	B.Tags = B.parser.Tags
-	B.Channels = make(map[string]Stored_channel)
+	B.Name = B.Parser.Name
+	B.Tags = B.Parser.Tags
+	B.Channels = make(map[string]types.Stored_channel)
 
 	// Count validated channels
 	validatedChannels := make([]Telemetry_channel, 0)
-	for _, c := range B.parser.Channels {
-		if c.is_Validated {
+	for _, c := range B.Parser.Channels {
+		if c.Is_Validated {
 			validatedChannels = append(validatedChannels, c)
 		}
 	}
@@ -89,7 +118,7 @@ func (B *Basic_telemetry_file) LogFile_to_BTF() {
 
 			// Thread-safe channel addition
 			mu.Lock()
-			B.Channels[channel.Name] = Stored_channel{
+			B.Channels[channel.Name] = types.Stored_channel{
 				Unit: channel.Unit,
 				Conv: conversion,
 				Data: data,
@@ -136,44 +165,39 @@ func (B *Basic_telemetry_file) Write_BTF(overwrite bool) error {
 		return err
 	}
 	defer f.Close()
+	bw := bufio.NewWriterSize(f, 4*1024*1024) // 4 MB write buffer
+	defer bw.Flush()
 
-	if _, err := f.Write([]byte("MRTF")); err != nil {
+	if _, err := bw.Write([]byte("MRTF")); err != nil {
 		return err
 	}
-	if err := binary.Write(f, binary.LittleEndian, uint8(1)); err != nil { // version num ig
+	if err := binary.Write(bw, binary.LittleEndian, uint8(2)); err != nil {
 		return err
 	}
-
-	// Endianness: 0 = LittleEndian, 1 = BigEndian
-	// this uses LittleEndian (0).
-	if err := binary.Write(f, binary.LittleEndian, uint8(0)); err != nil {
+	if err := binary.Write(bw, binary.LittleEndian, uint8(0)); err != nil {
 		return err
 	}
-
-	if err := writeString(f, B.Name); err != nil {
+	if err := WriteString(bw, B.Name); err != nil {
 		return err
 	}
-
-	if err := binary.Write(f, binary.LittleEndian, uint32(len(B.Tags))); err != nil {
+	if err := binary.Write(bw, binary.LittleEndian, uint32(len(B.Tags))); err != nil {
 		return err
 	}
 	for _, t := range B.Tags {
-		if err := writeString(f, t); err != nil {
+		if err := WriteString(bw, t); err != nil {
 			return err
 		}
 	}
 
-	fmt.Printf("Writing %d channels concurrently\n", len(B.Channels))
-	if err := binary.Write(f, binary.LittleEndian, uint32(len(B.Channels))); err != nil {
+	if err := binary.Write(bw, binary.LittleEndian, uint32(len(B.Channels))); err != nil {
 		return err
 	}
 
-	// Pre-encode all channels concurrently
+	// Pre-encode all channels concurrently into in-memory buffers
 	type encodedChannel struct {
 		name string
 		data *bytes.Buffer
 	}
-
 	encodedChannels := make([]encodedChannel, 0, len(B.Channels))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -181,63 +205,197 @@ func (B *Basic_telemetry_file) Write_BTF(overwrite bool) error {
 
 	for name, ch := range B.Channels {
 		wg.Add(1)
-		go func(chName string, channel Stored_channel) {
+		go func(chName string, channel types.Stored_channel) {
 			defer wg.Done()
-
-			buf := new(bytes.Buffer)
-
-			// Encode channel metadata and data into buffer
-			if err := writeString(buf, chName); err != nil {
-				errChan <- err
-				return
+			buf := bytes.NewBuffer(make([]byte, 0, 32+len(channel.Data)*8))
+			if err := WriteString(buf, chName); err != nil {
+				errChan <- err; return
 			}
-			if err := writeString(buf, channel.Unit); err != nil {
-				errChan <- err
-				return
+			if err := WriteString(buf, channel.Unit); err != nil {
+				errChan <- err; return
 			}
 			if err := binary.Write(buf, binary.LittleEndian, channel.Conv); err != nil {
-				errChan <- err
-				return
+				errChan <- err; return
 			}
 			if err := binary.Write(buf, binary.LittleEndian, uint32(len(channel.Data))); err != nil {
-				errChan <- err
-				return
+				errChan <- err; return
 			}
-			for _, v := range channel.Data {
-				if err := binary.Write(buf, binary.LittleEndian, v); err != nil {
-					errChan <- err
-					return
-				}
+			if err := writeFloat64Slice(buf, channel.Data); err != nil {
+				errChan <- err; return
 			}
-
-			// Add to encoded channels list (thread-safe)
 			mu.Lock()
-			encodedChannels = append(encodedChannels, encodedChannel{
-				name: chName,
-				data: buf,
-			})
+			encodedChannels = append(encodedChannels, encodedChannel{name: chName, data: buf})
 			mu.Unlock()
-
-			fmt.Printf("Channel %s: %d data points encoded\n", chName, len(channel.Data))
 		}(name, ch)
 	}
-
 	wg.Wait()
 	close(errChan)
-
-	// Check for encoding errors
 	if err := <-errChan; err != nil {
 		return fmt.Errorf("error encoding channel: %w", err)
 	}
-
-	// Write all encoded channels to file sequentially
 	for _, encoded := range encodedChannels {
-		if _, err := f.Write(encoded.data.Bytes()); err != nil {
+		if _, err := bw.Write(encoded.data.Bytes()); err != nil {
 			return fmt.Errorf("error writing channel %s: %w", encoded.name, err)
 		}
 	}
 
+	// DLTS section — deleted segments
+	if len(B.DeletedSegments) > 0 {
+		if _, err := bw.Write([]byte("DLTS")); err != nil {
+			return err
+		}
+		if err := binary.Write(bw, binary.LittleEndian, uint32(len(B.DeletedSegments))); err != nil {
+			return err
+		}
+		for _, seg := range B.DeletedSegments {
+			if err := binary.Write(bw, binary.LittleEndian, seg.StartTime); err != nil {
+				return err
+			}
+			if err := binary.Write(bw, binary.LittleEndian, seg.EndTime); err != nil {
+				return err
+			}
+			if err := binary.Write(bw, binary.LittleEndian, uint32(len(seg.Channels))); err != nil {
+				return err
+			}
+			for chName, data := range seg.Channels {
+				if err := WriteString(bw, chName); err != nil {
+					return err
+				}
+				if err := binary.Write(bw, binary.LittleEndian, uint32(len(data))); err != nil {
+					return err
+				}
+				if err := writeFloat64Slice(bw, data); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	// NOTS section — notes
+	if len(B.Notes) > 0 {
+		if _, err := bw.Write([]byte("NOTS")); err != nil {
+			return err
+		}
+		if err := binary.Write(bw, binary.LittleEndian, uint32(len(B.Notes))); err != nil {
+			return err
+		}
+		for _, note := range B.Notes {
+			if err := WriteString(bw, note.ID); err != nil {
+				return err
+			}
+			if err := binary.Write(bw, binary.LittleEndian, note.StartTime); err != nil {
+				return err
+			}
+			if err := binary.Write(bw, binary.LittleEndian, note.EndTime); err != nil {
+				return err
+			}
+			if err := WriteString(bw, note.Title); err != nil {
+				return err
+			}
+			if err := WriteString(bw, note.Body); err != nil {
+				return err
+			}
+		}
+	}
+
+	// CLOG section — change log
+	if len(B.ChangeLog) > 0 {
+		if _, err := bw.Write([]byte("CLOG")); err != nil {
+			return err
+		}
+		if err := binary.Write(bw, binary.LittleEndian, uint32(len(B.ChangeLog))); err != nil {
+			return err
+		}
+		for _, op := range B.ChangeLog {
+			if err := binary.Write(bw, binary.LittleEndian, uint8(opTypeToUint8(op.OpType))); err != nil {
+				return err
+			}
+			if err := WriteString(bw, op.OpID); err != nil {
+				return err
+			}
+			if err := WriteString(bw, op.Payload); err != nil {
+				return err
+			}
+		}
+	}
+
+	// ORIG section — original full-resolution channel data for Reset to Original.
+	// Written once on first save; preserved unchanged by all subsequent saves.
+	if len(B.OriginalChannels) > 0 {
+		if _, err := bw.Write([]byte("ORIG")); err != nil {
+			return err
+		}
+		if err := binary.Write(bw, binary.LittleEndian, uint32(len(B.OriginalChannels))); err != nil {
+			return err
+		}
+		for chName, sc := range B.OriginalChannels {
+			if err := WriteString(bw, chName); err != nil {
+				return err
+			}
+			if err := WriteString(bw, sc.Unit); err != nil {
+				return err
+			}
+			if err := binary.Write(bw, binary.LittleEndian, sc.Conv); err != nil {
+				return err
+			}
+			if err := binary.Write(bw, binary.LittleEndian, uint32(len(sc.Data))); err != nil {
+				return err
+			}
+			if err := writeFloat64Slice(bw, sc.Data); err != nil {
+				return err
+			}
+		}
+	}
+
+	// TMUT section — time mutations (persists across saves for reset-after-save)
+	if len(B.TimeMutations) > 0 {
+		if _, err := bw.Write([]byte("TMUT")); err != nil {
+			return err
+		}
+		if err := binary.Write(bw, binary.LittleEndian, uint32(len(B.TimeMutations))); err != nil {
+			return err
+		}
+		for _, m := range B.TimeMutations {
+			if err := binary.Write(bw, binary.LittleEndian, m.Threshold); err != nil {
+				return err
+			}
+			if err := binary.Write(bw, binary.LittleEndian, m.Delta); err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
+}
+
+func opTypeToUint8(opType string) uint8 {
+	switch opType {
+	case "DeleteSegment":
+		return 1
+	case "AddNote":
+		return 2
+	case "EditNote":
+		return 3
+	case "DeleteNote":
+		return 4
+	default:
+		return 0
+	}
+}
+
+func uint8ToOpType(v uint8) string {
+	switch v {
+	case 1:
+		return "DeleteSegment"
+	case 2:
+		return "AddNote"
+	case 3:
+		return "EditNote"
+	case 4:
+		return "DeleteNote"
+	default:
+		return "Unknown"
+	}
 }
 
 func (B *Basic_telemetry_file) Read_BTF(filepath string) error {
@@ -339,7 +497,7 @@ func (B *Basic_telemetry_file) Read_BTF(filepath string) error {
 	}
 
 	// Parse channels concurrently
-	B.Channels = make(map[string]Stored_channel)
+	B.Channels = make(map[string]types.Stored_channel)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	errChan := make(chan error, chCount)
@@ -349,21 +507,16 @@ func (B *Basic_telemetry_file) Read_BTF(filepath string) error {
 		go func(meta channelMetadata) {
 			defer wg.Done()
 
-			// Parse float64 data from raw bytes
-			reader := bytes.NewReader(meta.rawData)
 			dataLen := len(meta.rawData) / 8
 			data := make([]float64, dataLen)
-
-			for j := 0; j < dataLen; j++ {
-				if err := binary.Read(reader, binary.LittleEndian, &data[j]); err != nil {
-					errChan <- fmt.Errorf("error reading data for channel %s: %w", meta.name, err)
-					return
-				}
+			if err := readFloat64Slice(bytes.NewReader(meta.rawData), data); err != nil {
+				errChan <- fmt.Errorf("error reading data for channel %s: %w", meta.name, err)
+				return
 			}
 
 			// Thread-safe map write
 			mu.Lock()
-			B.Channels[meta.name] = Stored_channel{
+			B.Channels[meta.name] = types.Stored_channel{
 				Unit: meta.unit,
 				Conv: meta.conv,
 				Data: data,
@@ -380,10 +533,165 @@ func (B *Basic_telemetry_file) Read_BTF(filepath string) error {
 		return err
 	}
 
+	// Scan for optional extension sections (DLTS, NOTS, CLOG, TMUT)
+	B.DeletedSegments = make([]types.Deleted_segment, 0)
+	B.Notes = make([]types.Note_entry, 0)
+	B.ChangeLog = make([]types.Change_op, 0)
+	B.TimeMutations = make([]types.TimeMutation, 0)
+
+	for {
+		tag := make([]byte, 4)
+		if _, err := io.ReadFull(f, tag); err != nil {
+			break
+		}
+		switch string(tag) {
+		case "DLTS":
+			var count uint32
+			if err := binary.Read(f, binary.LittleEndian, &count); err != nil {
+				goto doneScanning
+			}
+			for i := uint32(0); i < count; i++ {
+				var seg types.Deleted_segment
+				if err := binary.Read(f, binary.LittleEndian, &seg.StartTime); err != nil {
+					goto doneScanning
+				}
+				if err := binary.Read(f, binary.LittleEndian, &seg.EndTime); err != nil {
+					goto doneScanning
+				}
+				var chCount uint32
+				if err := binary.Read(f, binary.LittleEndian, &chCount); err != nil {
+					goto doneScanning
+				}
+				seg.Channels = make(map[string][]float64, chCount)
+				for j := uint32(0); j < chCount; j++ {
+					chName, err := readString(f)
+					if err != nil {
+						goto doneScanning
+					}
+					var dataLen uint32
+					if err := binary.Read(f, binary.LittleEndian, &dataLen); err != nil {
+						goto doneScanning
+					}
+					data := make([]float64, dataLen)
+					if err := readFloat64Slice(f, data); err != nil {
+						goto doneScanning
+					}
+					seg.Channels[chName] = data
+				}
+				B.DeletedSegments = append(B.DeletedSegments, seg)
+			}
+		case "NOTS":
+			var count uint32
+			if err := binary.Read(f, binary.LittleEndian, &count); err != nil {
+				goto doneScanning
+			}
+			for i := uint32(0); i < count; i++ {
+				var note types.Note_entry
+				id, err := readString(f)
+				if err != nil {
+					goto doneScanning
+				}
+				note.ID = id
+				if err := binary.Read(f, binary.LittleEndian, &note.StartTime); err != nil {
+					goto doneScanning
+				}
+				if err := binary.Read(f, binary.LittleEndian, &note.EndTime); err != nil {
+					goto doneScanning
+				}
+				title, err := readString(f)
+				if err != nil {
+					goto doneScanning
+				}
+				note.Title = title
+				body, err := readString(f)
+				if err != nil {
+					goto doneScanning
+				}
+				note.Body = body
+				B.Notes = append(B.Notes, note)
+			}
+		case "CLOG":
+			var count uint32
+			if err := binary.Read(f, binary.LittleEndian, &count); err != nil {
+				goto doneScanning
+			}
+			for i := uint32(0); i < count; i++ {
+				var opTypeByte uint8
+				if err := binary.Read(f, binary.LittleEndian, &opTypeByte); err != nil {
+					goto doneScanning
+				}
+				opID, err := readString(f)
+				if err != nil {
+					goto doneScanning
+				}
+				payload, err := readString(f)
+				if err != nil {
+					goto doneScanning
+				}
+				B.ChangeLog = append(B.ChangeLog, types.Change_op{
+					OpID:    opID,
+					OpType:  uint8ToOpType(opTypeByte),
+					Payload: payload,
+				})
+			}
+		case "ORIG":
+			var count uint32
+			if err := binary.Read(f, binary.LittleEndian, &count); err != nil {
+				goto doneScanning
+			}
+			B.OriginalChannels = make(map[string]types.Stored_channel, count)
+			for i := uint32(0); i < count; i++ {
+				chName, err := readString(f)
+				if err != nil {
+					goto doneScanning
+				}
+				unit, err := readString(f)
+				if err != nil {
+					goto doneScanning
+				}
+				var conv float64
+				if err := binary.Read(f, binary.LittleEndian, &conv); err != nil {
+					goto doneScanning
+				}
+				var dataLen uint32
+				if err := binary.Read(f, binary.LittleEndian, &dataLen); err != nil {
+					goto doneScanning
+				}
+				data := make([]float64, dataLen)
+				if err := readFloat64Slice(f, data); err != nil {
+					goto doneScanning
+				}
+				B.OriginalChannels[chName] = types.Stored_channel{Unit: unit, Conv: conv, Data: data}
+			}
+		case "TMUT":
+			var count uint32
+			if err := binary.Read(f, binary.LittleEndian, &count); err != nil {
+				goto doneScanning
+			}
+			for i := uint32(0); i < count; i++ {
+				var m types.TimeMutation
+				if err := binary.Read(f, binary.LittleEndian, &m.Threshold); err != nil {
+					goto doneScanning
+				}
+				if err := binary.Read(f, binary.LittleEndian, &m.Delta); err != nil {
+					goto doneScanning
+				}
+				B.TimeMutations = append(B.TimeMutations, m)
+			}
+		case "MFMD":
+			// Multi-file metadata handled by ReadMultiFileMetadata — seek back and stop
+			f.Seek(-4, io.SeekCurrent)
+			goto doneScanning
+		default:
+			goto doneScanning
+		}
+	}
+doneScanning:
+
 	return nil
 }
 
-func (B *Basic_telemetry_file) ReadMultiFileMetadata(filepath string) ([]File_metadata, error) {
+func (B *Basic_telemetry_file) ReadMultiFileMetadata(filepath string) ([]types.File_metadata, error) {
 	f, err := os.Open(filepath)
 	if err != nil {
 		return nil, err
@@ -453,7 +761,7 @@ func (B *Basic_telemetry_file) ReadMultiFileMetadata(filepath string) ([]File_me
 		return nil, err
 	}
 
-	fileMetadata := make([]File_metadata, fileCount)
+	fileMetadata := make([]types.File_metadata, fileCount)
 	for i := uint32(0); i < fileCount; i++ {
 		id, err := readString(f)
 		if err != nil {
@@ -510,7 +818,7 @@ func (B *Basic_telemetry_file) ReadMultiFileMetadata(filepath string) ([]File_me
 			return nil, err
 		}
 
-		fileMetadata[i] = File_metadata{
+		fileMetadata[i] = types.File_metadata{
 			ID:             id,
 			OriginalPath:   originalPath,
 			OriginalName:   originalName,
@@ -559,13 +867,13 @@ func (B *Basic_telemetry_file) List_all_stored_files() ([]string, error) {
 }
 
 func (B *Basic_telemetry_file) LoadMRTFForEditing() error {
-	if B.parser == nil {
+	if B.Parser == nil {
 		return errors.New("telemetry file parser not initialized")
 	}
 
-	B.parser.Name = B.Name
-	B.parser.Tags = B.Tags
-	B.parser.Channels = []Telemetry_channel{}
+	B.Parser.Name = B.Name
+	B.Parser.Tags = B.Tags
+	B.Parser.Channels = []Telemetry_channel{}
 
 	for name, storedChannel := range B.Channels {
 		data := make([]float32, len(storedChannel.Data))
@@ -576,13 +884,13 @@ func (B *Basic_telemetry_file) LoadMRTFForEditing() error {
 			originalData[i] = float32(val)
 		}
 
-		B.parser.Channels = append(B.parser.Channels, Telemetry_channel{
+		B.Parser.Channels = append(B.Parser.Channels, Telemetry_channel{
 			Name:         name,
 			Unit:         storedChannel.Unit,
 			Conversion:   float32(storedChannel.Conv),
 			OriginalConv: float32(storedChannel.Conv),
 			NegateData:   false,
-			is_Validated: true,
+			Is_Validated: true,
 			Data:         data,
 			OriginalData: originalData,
 		})

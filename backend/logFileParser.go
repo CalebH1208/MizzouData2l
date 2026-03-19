@@ -16,7 +16,7 @@ type Telemetry_channel struct {
 	Conversion   float32
 	OriginalConv float32
 	NegateData   bool
-	is_Validated bool
+	Is_Validated bool
 	Data         []float32
 	OriginalData []float32
 }
@@ -151,7 +151,7 @@ func (file *Telemetry_file) GetAllChannelNames() []string {
 func (file *Telemetry_file) GetAllChannelUnvalidatedNames() []string {
 	ret := []string{}
 	for _, channel := range file.Channels {
-		if !channel.is_Validated {
+		if !channel.Is_Validated {
 			ret = append(ret, channel.Name)
 		}
 	}
@@ -161,7 +161,7 @@ func (file *Telemetry_file) GetAllChannelUnvalidatedNames() []string {
 func (file *Telemetry_file) ValidateChannel(name string) error {
 	for i, channel := range file.Channels {
 		if channel.Name == name {
-			file.Channels[i].is_Validated = true
+			file.Channels[i].Is_Validated = true
 			return nil
 		}
 	}
@@ -171,7 +171,7 @@ func (file *Telemetry_file) ValidateChannel(name string) error {
 func (file *Telemetry_file) UnvalidateChannel(name string) error {
 	for i, channel := range file.Channels {
 		if channel.Name == name {
-			file.Channels[i].is_Validated = false
+			file.Channels[i].Is_Validated = false
 			return nil
 		}
 	}

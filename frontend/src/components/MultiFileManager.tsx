@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { InitializeFromMultipleFiles, GetFileBoundaries, GetMultiFileStatus, ReorderFiles, RemoveFileFromSequence, SaveConcatenatedFile, LoadMultiFileMRTF, CheckMRTFFileExists } from '../../wailsjs/go/Backend/Full_graph';
+import { InitializeFromMultipleFiles, GetFileBoundaries, GetMultiFileStatus, ReorderFiles, RemoveFileFromSequence, SaveConcatenatedFile, LoadMultiFileMRTF, CheckMRTFFileExists } from '../../wailsjs/go/graph/Full_graph';
 import { OpenMultipleFilesDialog, OpenFileDialog } from '../../wailsjs/go/main/App';
-import { Backend } from '../../wailsjs/go/models';
+import { types } from '../../wailsjs/go/models';
 import { EventsEmit } from '../../wailsjs/runtime/runtime';
 import AlertModal from './AlertModal';
 import ConfirmModal from './ConfirmModal';
@@ -13,7 +13,7 @@ interface MultiFileManagerProps {
 }
 
 const MultiFileManager: React.FC<MultiFileManagerProps> = ({ isOpen, onClose }) => {
-  const [files, setFiles] = useState<Backend.File_metadata[]>([]);
+  const [files, setFiles] = useState<types.File_metadata[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [isMultiFile, setIsMultiFile] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);

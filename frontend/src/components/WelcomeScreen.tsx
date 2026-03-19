@@ -1,7 +1,11 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 
-const WelcomeScreen: React.FC = () => {
+interface Props {
+  onOpenFileManager: () => void;
+}
+
+const WelcomeScreen: React.FC<Props> = ({ onOpenFileManager }) => {
   const navigate = useNavigate();
 
   const handleNavigate = (path: string) => {
@@ -92,6 +96,35 @@ const WelcomeScreen: React.FC = () => {
           }}
         >
           Graphs n Stuff
+        </button>
+
+        <button
+          onClick={onOpenFileManager}
+          style={{
+            padding: '15px 40px',
+            fontSize: '18px',
+            fontWeight: '600',
+            backgroundColor: '#F1B82D',
+            color: 'black',
+            border: '2px solid #F1B82D',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            minWidth: '200px',
+            transition: 'all 0.3s ease',
+            boxShadow: '0 4px 8px rgba(0,0,0,0.3)'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = '#f8f8f8';
+            e.currentTarget.style.transform = 'translateY(-2px)';
+            e.currentTarget.style.boxShadow = '0 6px 12px rgba(0,0,0,0.4)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = '#F1B82D';
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.3)';
+          }}
+        >
+          File Manager
         </button>
       </div>
     </div>

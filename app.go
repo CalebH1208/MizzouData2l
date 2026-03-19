@@ -110,6 +110,21 @@ func (a *App) SaveFileDialog(defaultFilename string) (string, error) {
 	return result, err
 }
 
+func (a *App) SaveDataExportDialog(defaultFilename string) (string, error) {
+	options := runtime.SaveDialogOptions{
+		Title:           "Export Fragment Data",
+		DefaultFilename: defaultFilename,
+		Filters: []runtime.FileFilter{
+			{
+				DisplayName: "CSV Files (*.csv)",
+				Pattern:     "*.csv",
+			},
+		},
+	}
+	result, err := runtime.SaveFileDialog(a.ctx, options)
+	return result, err
+}
+
 func (a *App) WriteFile(filePath string, data []byte) error {
 	return os.WriteFile(filePath, data, 0644)
 }

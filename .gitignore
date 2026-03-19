@@ -5,3 +5,4 @@ frontend/dist
 .claude/
 frontend/wailsjs/*
 tmpclaude*
+cloud_config.json

@@ -1,13 +1,13 @@
 package Backend_test
 
 import (
-	Backend "MizzouDataTool/backend"
+	"MizzouDataTool/backend/graph"
 	"testing"
 )
 
 func TestGetExportMarkerPairs(t *testing.T) {
 	// Create a Full_graph instance with test markers
-	fg := &Backend.Full_graph{
+	fg := &graph.Full_graph{
 		ExportStartLines: []float64{15, 29, 205},
 		ExportEndLines:   []float64{68, 290},
 	}
@@ -84,7 +84,7 @@ func TestGetExportMarkerPairs_MultipleScenarios(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fg := &Backend.Full_graph{
+			fg := &graph.Full_graph{
 				ExportStartLines: tt.starts,
 				ExportEndLines:   tt.ends,
 			}
