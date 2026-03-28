@@ -32,6 +32,13 @@ export interface ConflictInfo {
   uploaded_at: string;
 }
 
+export interface SyncRecord {
+  cloud_key: string;
+  local_path: string;
+  downloaded_at: string;
+  etag: string;
+}
+
 export type PaneSelection =
   | { pane: 'local'; item: LocalFileInfo }
   | { pane: 'cloud'; item: CloudFileInfo }

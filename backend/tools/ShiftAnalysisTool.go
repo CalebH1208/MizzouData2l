@@ -44,6 +44,7 @@ type ShiftEvent struct {
 	PreShiftMaxG    float64 `json:"preShiftMaxG"`
 	ShiftMinG       float64 `json:"shiftMinG"`
 	RecoveryTime    float64 `json:"recoveryTime"`
+	TotalShiftTime  float64 `json:"totalShiftTime"`
 }
 
 type OverlayCurve struct {
@@ -370,20 +371,19 @@ func detectShifts(times, rpm, gear, speed, longG, shiftRequest []float64, pressu
 		}
 
 		// Calculate pre/post shift metrics
-		preShiftIdx := max(0, shiftRequestIdx-10)
 		postShiftIdx := min(n-1, shiftEndIdx+10)
 
-		preShiftRPM := rpm[preShiftIdx]
+		preShiftRPM := rpm[shiftRequestIdx]
 		postShiftRPM := rpm[postShiftIdx]
-		preShiftSpeed := speed[preShiftIdx]
+		preShiftSpeed := speed[shiftRequestIdx]
 		postShiftSpeed := speed[postShiftIdx]
 
 		// Reaction time: from shift request to gear starting to move
 		deltaTReaction := times[gearChangeIdx] - times[shiftRequestIdx]
 		// Shift duration: from gear starting to move until stabilized
 		deltaTDuration := times[shiftEndIdx] - times[gearChangeIdx]
-		// Total time: from request to detected in next gear
-		totalShiftTime := times[gearChangeIdx] - times[shiftRequestIdx]
+		// Total time: from request to gear stabilized
+		totalShiftTime := times[shiftEndIdx] - times[shiftRequestIdx]
 
 		// Detect shift failure: if gear doesn't change within 500ms of request
 		shiftFailed := totalShiftTime > 0.5
@@ -403,9 +403,9 @@ func detectShifts(times, rpm, gear, speed, longG, shiftRequest []float64, pressu
 		// For downshifts: find maximum RPM (blip peak)
 		var peakRPM float64
 		if isUpshift {
-			peakRPM = findMinRPMInWindow(rpm, shiftRequestIdx, gearChangeIdx)
+			peakRPM = findMinRPMInWindow(rpm, shiftRequestIdx, shiftEndIdx)
 		} else {
-			peakRPM = findPeakRPMInWindow(rpm, shiftRequestIdx, gearChangeIdx)
+			peakRPM = findPeakRPMInWindow(rpm, shiftRequestIdx, shiftEndIdx)
 		}
 
 		// Calculate shift-specific metrics
@@ -496,6 +496,7 @@ func detectShifts(times, rpm, gear, speed, longG, shiftRequest []float64, pressu
 			PreShiftMaxG:    preShiftMaxG,
 			ShiftMinG:       shiftMinG,
 			RecoveryTime:    recoveryTime,
+			TotalShiftTime:  totalShiftTime,
 		}
 
 		shifts = append(shifts, shift)

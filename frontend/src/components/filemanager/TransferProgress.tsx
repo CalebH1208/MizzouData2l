@@ -16,22 +16,22 @@ const TransferProgressBar: React.FC<Props> = ({ progress }) => {
 
   return (
     <div style={{
-      padding: '10px 16px',
-      borderTop: '1px solid #333',
-      backgroundColor: '#111',
+      padding: '12px 20px',
+      borderTop: '2px solid #333',
+      backgroundColor: '#1a1a1a',
     }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 12, color: '#ccc' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 13, color: '#ccc' }}>
         <span>{arrow} {label} <strong style={{ color: '#F1B82D' }}>{progress.filename}</strong></span>
         <span>
           {formatBytes(progress.bytes_done)} / {formatBytes(progress.bytes_total)} ({pct}%)
         </span>
       </div>
-      <div style={{ height: 8, backgroundColor: '#333', borderRadius: 4, overflow: 'hidden' }}>
+      <div style={{ height: 10, backgroundColor: '#333', borderRadius: 6, overflow: 'hidden' }}>
         <div style={{
           height: '100%',
           width: `${pct}%`,
           backgroundColor: '#F1B82D',
-          borderRadius: 4,
+          borderRadius: 6,
           transition: 'width 0.2s ease',
         }} />
       </div>

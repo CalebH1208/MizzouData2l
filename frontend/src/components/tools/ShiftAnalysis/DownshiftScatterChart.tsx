@@ -4,7 +4,6 @@ import { ToolResult, ScatterPoint, ShiftEvent } from './types';
 
 interface DownshiftScatterChartProps {
   result: ToolResult;
-  gearPairFilter: string;
 }
 
 export const DownshiftScatterChart: React.FC<DownshiftScatterChartProps> = ({ result }) => {

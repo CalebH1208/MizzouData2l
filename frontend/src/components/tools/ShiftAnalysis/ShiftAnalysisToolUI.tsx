@@ -362,13 +362,13 @@ const ShiftAnalysisToolUI: React.FC<ShiftAnalysisToolUIProps> = ({ fragment }) =
           }}>
             <div ref={chartContainerRef} style={{ width: '100%', height: '100%' }}>
               {analysisMode === 'upshift-overlay' && (
-                <UpshiftOverlayChart result={result} gearPairFilter={gearPairFilter} />
+                <UpshiftOverlayChart result={result} />
               )}
               {analysisMode === 'downshift-scatter' && (
-                <DownshiftScatterChart result={result} gearPairFilter={gearPairFilter} />
+                <DownshiftScatterChart result={result} />
               )}
               {analysisMode === 'pressure-correlation' && (
-                <PressureCorrelationChart result={result} gearPairFilter={gearPairFilter} />
+                <PressureCorrelationChart result={result} />
               )}
             </div>
           </div>
@@ -456,14 +456,12 @@ const renderMetricsTable = (result: ToolResult) => {
           </thead>
           <tbody>
             {result.data.shifts.map((shift, i) => {
-              const totalTime = (shift.deltaTReaction * 1000).toFixed(0);
+              const totalTime = (shift.totalShiftTime * 1000).toFixed(0);
               const blipCutRPM = shift.peakRPM;
-              const targetRPM = shift.isUpshift
-                ? blipCutRPM + shift.deltaRPMError
-                : blipCutRPM + shift.deltaRPMError;
+              const targetRPM = blipCutRPM + shift.deltaRPMError;
               const rpmError = shift.deltaRPMError;
               const requiredRPMChange = targetRPM - shift.preShiftRPM;
-              const revMatchPercent = requiredRPMChange !== 0
+              const revMatchPercent = Math.abs(requiredRPMChange) > 50
                 ? Math.abs((rpmError / requiredRPMChange) * 100)
                 : 0;
 
@@ -570,22 +568,22 @@ const renderKPISummary = (result: ToolResult) => {
     : 0;
 
   const avgUpshiftError = upshifts.length > 0
-    ? Math.abs(upshifts.reduce((sum: number, s: ShiftEvent) => sum + s.deltaRPMError, 0) / upshifts.length)
+    ? upshifts.reduce((sum: number, s: ShiftEvent) => sum + Math.abs(s.deltaRPMError), 0) / upshifts.length
     : 0;
   const avgDownshiftError = downshifts.length > 0
-    ? Math.abs(downshifts.reduce((sum: number, s: ShiftEvent) => sum + s.deltaRPMError, 0) / downshifts.length)
+    ? downshifts.reduce((sum: number, s: ShiftEvent) => sum + Math.abs(s.deltaRPMError), 0) / downshifts.length
     : 0;
 
   const avgUpshiftRevMatch = upshifts.length > 0
     ? upshifts.reduce((sum: number, s: ShiftEvent) => {
         const requiredChange = (s.peakRPM + s.deltaRPMError) - s.preShiftRPM;
-        return sum + (requiredChange !== 0 ? Math.abs((s.deltaRPMError / requiredChange) * 100) : 0);
+        return sum + (Math.abs(requiredChange) > 50 ? Math.abs((s.deltaRPMError / requiredChange) * 100) : 0);
       }, 0) / upshifts.length
     : 0;
   const avgDownshiftRevMatch = downshifts.length > 0
     ? downshifts.reduce((sum: number, s: ShiftEvent) => {
         const requiredChange = (s.peakRPM + s.deltaRPMError) - s.preShiftRPM;
-        return sum + (requiredChange !== 0 ? Math.abs((s.deltaRPMError / requiredChange) * 100) : 0);
+        return sum + (Math.abs(requiredChange) > 50 ? Math.abs((s.deltaRPMError / requiredChange) * 100) : 0);
       }, 0) / downshifts.length
     : 0;
 

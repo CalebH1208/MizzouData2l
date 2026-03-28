@@ -126,15 +126,10 @@ func (fg *Full_graph) applyInverse(op types.Change_op) error {
 		// Restore channel data in parallel
 		parallelSpliceIn(fg.stored_file_manager.Channels, seg.Channels, insertAt)
 
-		// Shift note times back to match restored timestamps
-		removedDuration := seg.EndTime - seg.StartTime
-		for i := range fg.Notes {
-			if fg.Notes[i].StartTime >= seg.StartTime {
-				fg.Notes[i].StartTime += (removedDuration - 0.01)
-			}
-			if fg.Notes[i].EndTime >= seg.StartTime {
-				fg.Notes[i].EndTime += (removedDuration - 0.01)
-			}
+		// Restore notes exactly from the pre-delete snapshot
+		if seg.NotesSnapshot != nil {
+			fg.Notes = make([]types.Note_entry, len(seg.NotesSnapshot))
+			copy(fg.Notes, seg.NotesSnapshot)
 		}
 
 		// Pop the last time mutation (undo reverses the most recent mutation)
@@ -224,12 +219,15 @@ func (fg *Full_graph) reapplyOp(op types.Change_op) error {
 			return fmt.Errorf("segment index out of range")
 		}
 		seg := fg.DeletedSegments[payload.SegmentIndex]
-		return fg.reapplyDeleteSegment(seg)
+		if err := fg.reapplyDeleteSegment(seg, payload.SegmentIndex); err != nil {
+			return err
+		}
+		return nil
 	}
 	return nil
 }
 
-func (fg *Full_graph) reapplyDeleteSegment(seg types.Deleted_segment) error {
+func (fg *Full_graph) reapplyDeleteSegment(seg types.Deleted_segment, segmentIndex int) error {
 	startIdx := fg.findTimeIndex(fg.FullTimeStamps, seg.StartTime)
 	endIdx := startIdx + len(seg.TimeData)
 	if endIdx > len(fg.FullTimeStamps) {
@@ -255,16 +253,40 @@ func (fg *Full_graph) reapplyDeleteSegment(seg types.Deleted_segment) error {
 	}
 	fg.FullTimeStamps = newTimestamps
 
-	// Shift note times forward by collapsed amount (same as original delete)
+	// Snapshot notes before modification so a subsequent undo can restore exactly
+	seg.NotesSnapshot = make([]types.Note_entry, len(fg.Notes))
+	copy(seg.NotesSnapshot, fg.Notes)
+
+	// Apply the same trim/delete logic as the original DeleteSegment
 	delta := -(removedDuration - 0.01)
-	for i := range fg.Notes {
-		if fg.Notes[i].StartTime >= seg.StartTime {
-			fg.Notes[i].StartTime += delta
+	newNotes := fg.Notes[:0]
+	for _, n := range fg.Notes {
+		if n.EndTime <= seg.StartTime {
+			newNotes = append(newNotes, n)
+			continue
 		}
-		if fg.Notes[i].EndTime >= seg.StartTime {
-			fg.Notes[i].EndTime += delta
+		if n.StartTime >= seg.EndTime {
+			n.StartTime += delta
+			n.EndTime += delta
+			newNotes = append(newNotes, n)
+			continue
+		}
+		if n.StartTime < seg.StartTime {
+			if n.EndTime > seg.EndTime {
+				n.EndTime += delta
+			} else {
+				n.EndTime = seg.StartTime
+			}
+			newNotes = append(newNotes, n)
+		} else {
+			if n.EndTime > seg.EndTime {
+				n.StartTime = seg.StartTime
+				n.EndTime += delta
+				newNotes = append(newNotes, n)
+			}
 		}
 	}
+	fg.Notes = newNotes
 
 	// Re-add time mutation for redo
 	fg.TimeMutations = append(fg.TimeMutations, types.TimeMutation{
@@ -310,6 +332,9 @@ func (fg *Full_graph) reapplyDeleteSegment(seg types.Deleted_segment) error {
 		}
 		fg.FileBoundaries = newBoundaries
 	}
+
+	// Write updated snapshots back so a subsequent undo has accurate state
+	fg.DeletedSegments[segmentIndex] = seg
 
 	fg.rebuildAllLOD()
 	return nil

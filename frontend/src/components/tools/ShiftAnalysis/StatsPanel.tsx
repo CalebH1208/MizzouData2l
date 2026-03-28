@@ -45,10 +45,10 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ result }) => {
     : 0;
 
   const avgUpshiftError = upshifts.length > 0
-    ? Math.abs(upshifts.reduce((sum, s) => sum + s.deltaRPMError, 0) / upshifts.length)
+    ? upshifts.reduce((sum, s) => sum + Math.abs(s.deltaRPMError), 0) / upshifts.length
     : 0;
   const avgDownshiftError = downshifts.length > 0
-    ? Math.abs(downshifts.reduce((sum, s) => sum + s.deltaRPMError, 0) / downshifts.length)
+    ? downshifts.reduce((sum, s) => sum + Math.abs(s.deltaRPMError), 0) / downshifts.length
     : 0;
 
   const upshiftsUnderLoad = upshifts.filter(s => s.preShiftMaxG > 0.8);

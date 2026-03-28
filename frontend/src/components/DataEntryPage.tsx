@@ -1147,7 +1147,7 @@ const DataEntryPage: React.FC = () => {
               position: 'relative'
             }}>
               {selectedChannel ? (
-                <TuneGraph key={graphKey} disableContextMenu={true} />
+                <TuneGraph key={graphKey} disableContextMenu={true} disableDragSelect={true} />
               ) : (
                 <div style={{
                   display: 'flex',

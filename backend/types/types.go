@@ -21,6 +21,7 @@ type Deleted_segment struct {
 	TimeData               []float64
 	FileMetadataSnapshot   []File_metadata
 	FileBoundariesSnapshot []float64
+	NotesSnapshot          []Note_entry
 }
 
 type Change_op struct {

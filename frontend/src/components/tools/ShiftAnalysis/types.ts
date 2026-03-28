@@ -27,6 +27,7 @@ export interface ShiftEvent {
   preShiftMaxG: number;
   shiftMinG: number;
   recoveryTime: number;
+  totalShiftTime: number;
 }
 
 export interface OverlayCurve {

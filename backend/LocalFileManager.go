@@ -112,6 +112,23 @@ func (l *Local_file_manager) CreateLocalFolder(path string) error {
 	return os.MkdirAll(absPath, 0755)
 }
 
+// LocalFileExists returns true if a file exists at the given path within DATACACHE.
+func (l *Local_file_manager) LocalFileExists(path string) (bool, error) {
+	cacheDir, err := l.GetDataCacheDir()
+	if err != nil {
+		return false, err
+	}
+	absPath, err := safeJoin(cacheDir, path)
+	if err != nil {
+		return false, err
+	}
+	_, err = os.Stat(absPath)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // DeleteLocalFile deletes a file or empty directory.
 func (l *Local_file_manager) DeleteLocalFile(path string) error {
 	cacheDir, err := l.GetDataCacheDir()

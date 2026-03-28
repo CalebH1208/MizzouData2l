@@ -18,7 +18,6 @@ const CloudSetupModal: React.FC<Props> = ({ isOpen, onClose, onConfigured }) => 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  // Pre-populate from current config whenever the modal opens
   useEffect(() => {
     if (!isOpen) return;
     GetCurrentConfig().then((cfg) => {
@@ -39,8 +38,6 @@ const CloudSetupModal: React.FC<Props> = ({ isOpen, onClose, onConfigured }) => 
       setError('All fields are required.');
       return;
     }
-    // If the secret field still holds the masked placeholder, pass empty string —
-    // the backend will keep the existing secret in that case.
     const secretToSend = secretKey === SECRET_PLACEHOLDER ? '' : secretKey.trim();
     setSaving(true);
     setError('');
@@ -70,8 +67,8 @@ const CloudSetupModal: React.FC<Props> = ({ isOpen, onClose, onConfigured }) => 
         width: 480,
         maxWidth: '90vw',
       }}>
-        <h3 style={{ color: '#F1B82D', marginTop: 0, marginBottom: 8 }}>Configure Cloud Storage</h3>
-        <p style={{ color: '#888', fontSize: 12, marginBottom: 20 }}>
+        <h2 style={{ color: '#F1B82D', marginTop: 0, marginBottom: 8, fontSize: 22, fontWeight: 'bold' }}>Configure Cloud Storage</h2>
+        <p style={{ color: '#aaa', fontSize: 13, marginBottom: 20 }}>
           AWS S3 credentials. Leave the secret key masked to keep the existing value.
           Saved to <code style={{ color: '#F1B82D' }}>cloud_config.json</code> next to the executable.
         </p>
@@ -84,7 +81,7 @@ const CloudSetupModal: React.FC<Props> = ({ isOpen, onClose, onConfigured }) => 
           { label: 'Your Display Name', value: displayName, set: setDisplayName, type: 'text', placeholder: 'John Smith' },
         ].map(({ label, value, set, type, placeholder }) => (
           <div key={label} style={{ marginBottom: 14 }}>
-            <label style={{ display: 'block', color: '#ccc', fontSize: 12, marginBottom: 4 }}>{label}</label>
+            <label style={{ display: 'block', color: '#ccc', fontSize: 13, marginBottom: 4, fontWeight: 'bold' }}>{label}</label>
             <input
               type={type}
               value={value}
@@ -92,19 +89,33 @@ const CloudSetupModal: React.FC<Props> = ({ isOpen, onClose, onConfigured }) => 
               placeholder={placeholder}
               style={{
                 width: '100%', boxSizing: 'border-box',
-                backgroundColor: '#0a0a0a', color: 'white',
-                border: '1px solid #444', borderRadius: 6,
+                backgroundColor: 'black', color: 'white',
+                border: '2px solid #F1B82D', borderRadius: 6,
                 padding: '8px 10px', fontSize: 13,
               }}
             />
           </div>
         ))}
 
-        {error && <div style={{ color: '#ff6b6b', fontSize: 12, marginBottom: 14 }}>{error}</div>}
+        {error && <div style={{ color: '#ff6b6b', fontSize: 13, marginBottom: 14 }}>{error}</div>}
 
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
-          <button onClick={onClose} disabled={saving} style={cancelBtn}>Cancel</button>
-          <button onClick={handleSave} disabled={saving} style={saveBtn}>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 12 }}>
+          <button
+            onClick={onClose}
+            disabled={saving}
+            style={cancelBtn}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#444'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#000000'}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            style={saveBtn}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#d19f25'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#F1B82D'}
+          >
             {saving ? 'Saving...' : 'Save & Connect'}
           </button>
         </div>
@@ -114,12 +125,27 @@ const CloudSetupModal: React.FC<Props> = ({ isOpen, onClose, onConfigured }) => 
 };
 
 const saveBtn: React.CSSProperties = {
-  backgroundColor: '#F1B82D', color: '#0a0a0a', border: 'none',
-  borderRadius: 6, padding: '10px 20px', fontSize: 14, fontWeight: 'bold', cursor: 'pointer',
+  backgroundColor: '#F1B82D',
+  color: 'black',
+  border: 'none',
+  borderRadius: 8,
+  padding: '12px 24px',
+  fontSize: 14,
+  fontWeight: 'bold',
+  cursor: 'pointer',
+  transition: 'all 0.3s ease',
 };
+
 const cancelBtn: React.CSSProperties = {
-  backgroundColor: '#333', color: 'white', border: '2px solid #666',
-  borderRadius: 6, padding: '10px 20px', fontSize: 14, fontWeight: 'bold', cursor: 'pointer',
+  backgroundColor: '#000000',
+  color: 'white',
+  border: '2px solid #F1B82D',
+  borderRadius: 6,
+  padding: '10px 20px',
+  fontSize: 14,
+  fontWeight: 'bold',
+  cursor: 'pointer',
+  transition: 'all 0.3s ease',
 };
 
 export default CloudSetupModal;

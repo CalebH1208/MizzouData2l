@@ -4,7 +4,6 @@ import { ToolResult, OverlayCurve } from './types';
 
 interface UpshiftOverlayChartProps {
   result: ToolResult;
-  gearPairFilter: string;
 }
 
 export const UpshiftOverlayChart: React.FC<UpshiftOverlayChartProps> = ({ result }) => {

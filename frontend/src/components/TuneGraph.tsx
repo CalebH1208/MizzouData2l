@@ -37,9 +37,10 @@ interface TuneGraphProps {
   width?: number;
   height?: number;
   disableContextMenu?: boolean;
+  disableDragSelect?: boolean;
 }
 
-const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHeight, disableContextMenu = false }) => {
+const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHeight, disableContextMenu = false, disableDragSelect = false }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -926,7 +927,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       const xWithin = e.clientX - rect.left - marginLeftRef.current;
       if (xWithin < 0 || xWithin > chartWidthRef.current) return;
 
-      if (e.shiftKey) {
+      if (e.shiftKey && !disableDragSelect) {
         isDragSelectingRef.current = true;
         const t = timeFromClientX(e.clientX);
         dragSelectStartTimeRef.current = t;

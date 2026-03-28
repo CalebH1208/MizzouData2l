@@ -10,16 +10,16 @@ import (
 
 // SyncRecord tracks when a cloud file was downloaded to a local path.
 type SyncRecord struct {
-	CloudKey    string    `json:"cloud_key"`
-	LocalPath   string    `json:"local_path"`
-	DownloadedAt string    `json:"downloaded_at"`
-	ETag        string    `json:"etag"`
+	CloudKey     string `json:"cloud_key"`
+	LocalPath    string `json:"local_path"`
+	DownloadedAt string `json:"downloaded_at"`
+	ETag         string `json:"etag"`
 }
 
 // Sync_state manages DATACACHE/.cloud_sync_state.json
 type Sync_state struct {
 	mu      sync.Mutex
-	records map[string]SyncRecord // key: localPath (absolute)
+	records map[string]SyncRecord // key: filepath.Clean(localPath)
 	path    string                // path to the JSON file
 }
 
@@ -50,7 +50,9 @@ func (ss *Sync_state) load() {
 		return
 	}
 	for _, r := range records {
-		ss.records[r.LocalPath] = r
+		key := filepath.Clean(r.LocalPath)
+		r.LocalPath = key
+		ss.records[key] = r
 	}
 }
 
@@ -71,27 +73,28 @@ func (ss *Sync_state) save() {
 func (ss *Sync_state) RecordDownload(cloudKey, localPath, etag string) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
-	ss.records[localPath] = SyncRecord{
+	key := filepath.Clean(localPath)
+	ss.records[key] = SyncRecord{
 		CloudKey:     cloudKey,
-		LocalPath:    localPath,
+		LocalPath:    key,
 		DownloadedAt: time.Now().UTC().Format(time.RFC3339),
 		ETag:         etag,
 	}
 	ss.save()
 }
 
-// GetDownloadRecord returns the sync record for a local file path, if any.
-func (ss *Sync_state) GetDownloadRecord(localPath string) (SyncRecord, bool) {
+// GetDownloadRecord returns the sync record for a local file path.
+// Returns a zero-value SyncRecord (empty cloud_key) if not found.
+func (ss *Sync_state) GetDownloadRecord(localPath string) SyncRecord {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
-	r, ok := ss.records[localPath]
-	return r, ok
+	return ss.records[filepath.Clean(localPath)]
 }
 
 // RemoveRecord deletes the sync record for a local path (e.g., when file is deleted).
 func (ss *Sync_state) RemoveRecord(localPath string) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
-	delete(ss.records, localPath)
+	delete(ss.records, filepath.Clean(localPath))
 	ss.save()
 }

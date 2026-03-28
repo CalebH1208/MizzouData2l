@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -248,8 +249,8 @@ func (cs *Cloud_storage) GetCloudFileMeta(key string) (CloudFileInfo, error) {
 
 // CheckConflict returns whether the cloud version is newer than what was last downloaded locally.
 func (cs *Cloud_storage) CheckConflict(cloudKey, localPath string) (ConflictInfo, error) {
-	record, ok := cs.syncState.GetDownloadRecord(localPath)
-	if !ok {
+	record := cs.syncState.GetDownloadRecord(localPath)
+	if record.CloudKey == "" {
 		return ConflictInfo{HasConflict: false}, nil
 	}
 
@@ -418,6 +419,33 @@ func (cs *Cloud_storage) CopyCloudFile(srcKey, dstKey string) error {
 	if err != nil {
 		return fmt.Errorf("copy failed: %w", err)
 	}
+	return nil
+}
+
+// MoveToDeleted moves a cloud file to the top-level "Deleted/" prefix (soft delete).
+func (cs *Cloud_storage) MoveToDeleted(key string) error {
+	if !cs.IsConfigured() {
+		return fmt.Errorf("cloud storage not configured")
+	}
+	name := path.Base(key)
+	dstKey := "Deleted/" + name
+	if err := cs.CopyCloudFile(key, dstKey); err != nil {
+		return err
+	}
+	return cs.DeleteCloudFile(key)
+}
+
+// SyncFile uploads a local file back to its original cloud key and updates the sync record.
+func (cs *Cloud_storage) SyncFile(localPath, cloudKey string) error {
+	if err := cs.UploadFile(localPath, cloudKey); err != nil {
+		return err
+	}
+	meta, err := cs.GetCloudFileMeta(cloudKey)
+	etag := ""
+	if err == nil {
+		etag = meta.ETag
+	}
+	cs.syncState.RecordDownload(cloudKey, localPath, etag)
 	return nil
 }
 

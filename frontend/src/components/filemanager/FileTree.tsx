@@ -19,7 +19,6 @@ interface Props {
   onToggleExpand: (key: string) => void;
   onSelect: (key: string) => void;
   onDoubleClick?: (key: string) => void;
-  // Within-pane drag-to-move
   onDragFile?: (key: string) => void;
   onDropOnFolder?: (folderKey: string) => void;
   indent?: number;
@@ -79,16 +78,17 @@ const FileTree: React.FC<Props> = ({
             style={{
               display: 'flex',
               alignItems: 'center',
-              padding: '4px 8px',
-              paddingLeft: 8 + indent * 16,
+              padding: '6px 10px',
+              paddingLeft: 10 + indent * 18,
               cursor: 'pointer',
               backgroundColor: dragOverKey === item._key
                 ? '#1a2a3a'
                 : selected === item._key
                 ? '#2a2a1a'
                 : 'transparent',
-              borderLeft: selected === item._key ? '2px solid #F1B82D' : dragOverKey === item._key ? '2px solid #4a9eff' : '2px solid transparent',
+              borderLeft: selected === item._key ? '3px solid #F1B82D' : dragOverKey === item._key ? '3px solid #4a9eff' : '3px solid transparent',
               userSelect: 'none',
+              transition: 'background-color 0.15s ease',
             }}
             onMouseEnter={(e) => {
               if (selected !== item._key && dragOverKey !== item._key)
@@ -99,42 +99,43 @@ const FileTree: React.FC<Props> = ({
                 (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
             }}
           >
-            <span style={{ width: 16, color: '#888', flexShrink: 0, fontSize: 10 }}>
+            <span style={{ width: 18, color: '#aaa', flexShrink: 0, fontSize: 11 }}>
               {item.isDir ? (expanded.has(item._key) ? '▼' : '▶') : ''}
             </span>
 
-            <span style={{ marginRight: 6, fontSize: 14, flexShrink: 0 }}>
+            <span style={{ marginRight: 8, fontSize: 15, flexShrink: 0 }}>
               {item.isDir ? '📁' : '📄'}
             </span>
 
             <span style={{
               flex: 1,
               color: item.isDir ? '#F1B82D' : 'white',
-              fontSize: 13,
+              fontSize: 14,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
+              fontWeight: item.isDir ? 'bold' : 'normal',
             }}>
               {item.name}
               {item.hasConflict && (
-                <span title="Cloud version is newer than your local copy" style={{ marginLeft: 6, color: '#ff8c00' }}>⚠</span>
+                <span title="Cloud version is newer than your local copy" style={{ marginLeft: 8, color: '#ff8c00' }}>⚠</span>
               )}
             </span>
 
             {!item.isDir && item.size !== undefined && (
-              <span style={{ color: '#666', fontSize: 11, marginLeft: 8, flexShrink: 0 }}>
+              <span style={{ color: '#888', fontSize: 12, marginLeft: 10, flexShrink: 0 }}>
                 {formatBytes(item.size)}
               </span>
             )}
 
             {item.meta && (
-              <span style={{ color: '#555', fontSize: 11, marginLeft: 8, flexShrink: 0, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ color: '#777', fontSize: 12, marginLeft: 10, flexShrink: 0, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {item.meta}
               </span>
             )}
 
             {!item.isDir && item.date && (
-              <span style={{ color: '#444', fontSize: 11, marginLeft: 8, flexShrink: 0 }}>
+              <span style={{ color: '#666', fontSize: 12, marginLeft: 10, flexShrink: 0 }}>
                 {formatDate(item.date)}
               </span>
             )}

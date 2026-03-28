@@ -160,18 +160,48 @@ func (fg *Full_graph) DeleteSegment(startTime, endTime float64) error {
 		fg.FileBoundaries = newBoundaries
 	}
 
-	// Shift note times to match the collapsed timestamps
+	// Snapshot notes before modification so undo can restore exactly
+	seg.NotesSnapshot = make([]types.Note_entry, len(fg.Notes))
+	copy(seg.NotesSnapshot, fg.Notes)
+
+	// Adjust notes relative to the deleted region
 	delta := -(removedDuration - 0.01)
-	if startIdx < len(fg.FullTimeStamps) {
-		for i := range fg.Notes {
-			if fg.Notes[i].StartTime >= seg.StartTime {
-				fg.Notes[i].StartTime += delta
+	newNotes := fg.Notes[:0]
+	for _, n := range fg.Notes {
+		// Note is entirely before the deleted region — keep as-is
+		if n.EndTime <= seg.StartTime {
+			newNotes = append(newNotes, n)
+			continue
+		}
+		// Note is entirely after the deleted region — shift it
+		if n.StartTime >= seg.EndTime {
+			n.StartTime += delta
+			n.EndTime += delta
+			newNotes = append(newNotes, n)
+			continue
+		}
+		// Note overlaps the deleted region — clamp its bounds
+		if n.StartTime < seg.StartTime {
+			// Note started before deletion; clamp end if it extended into deleted region
+			if n.EndTime > seg.EndTime {
+				// Note spans the entire deletion — shrink by removed duration
+				n.EndTime += delta
+			} else {
+				n.EndTime = seg.StartTime
 			}
-			if fg.Notes[i].EndTime >= seg.StartTime {
-				fg.Notes[i].EndTime += delta
+			newNotes = append(newNotes, n)
+		} else {
+			// Note started inside the deleted region
+			if n.EndTime > seg.EndTime {
+				// Note extends past the deletion — clamp start to deletion point and shift end
+				n.StartTime = seg.StartTime
+				n.EndTime += delta
+				newNotes = append(newNotes, n)
 			}
+			// else: note is entirely within deleted region — drop it
 		}
 	}
+	fg.Notes = newNotes
 
 	// Record time mutation for reset-after-save
 	fg.TimeMutations = append(fg.TimeMutations, types.TimeMutation{

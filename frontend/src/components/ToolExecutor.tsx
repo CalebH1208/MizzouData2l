@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Backend } from '../../wailsjs/go/models';
+import { useHelpKey } from '../contexts/HelpContext';
 import XYScatterToolUI from './tools/XYScatterToolUI';
 import DownforceToolUI from './tools/DownforceToolUI';
 import ShiftAnalysisToolUI from './tools/ShiftAnalysisToolUI';
@@ -17,6 +18,13 @@ const ToolExecutor: React.FC<ToolExecutorProps> = ({
   tool,
   onBack,
 }) => {
+  const { setHelpKey } = useHelpKey();
+
+  useEffect(() => {
+    setHelpKey(`tools/${tool.name}`);
+    return () => setHelpKey(null);
+  }, [tool.name]);
+
   const renderToolComponent = () => {
     switch (tool.name) {
       case 'xy-scatter':

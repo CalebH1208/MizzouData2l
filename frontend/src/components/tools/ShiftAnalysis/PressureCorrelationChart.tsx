@@ -4,7 +4,6 @@ import { ToolResult, PressurePoint, TrendLine } from './types';
 
 interface PressureCorrelationChartProps {
   result: ToolResult;
-  gearPairFilter: string;
 }
 
 export const PressureCorrelationChart: React.FC<PressureCorrelationChartProps> = ({ result }) => {
