@@ -16,10 +16,11 @@ import (
 )
 
 type Basic_telemetry_file struct {
-	Parser   *Telemetry_file
-	Name     string
-	Tags     []string
-	Channels map[string]types.Stored_channel
+	Parser         *Telemetry_file
+	Name           string
+	Tags           []string
+	StructuredTags types.Structured_tags
+	Channels       map[string]types.Stored_channel
 
 	Notes           []types.Note_entry
 	DeletedSegments []types.Deleted_segment
@@ -91,6 +92,7 @@ func New_BTF(fileParser *Telemetry_file) *Basic_telemetry_file {
 func (B *Basic_telemetry_file) LogFile_to_BTF() {
 	B.Name = B.Parser.Name
 	B.Tags = B.Parser.Tags
+	B.StructuredTags = B.Parser.StructuredTags
 	B.Channels = make(map[string]types.Stored_channel)
 
 	// Count validated channels
@@ -362,6 +364,27 @@ func (B *Basic_telemetry_file) Write_BTF(overwrite bool) error {
 			if err := binary.Write(bw, binary.LittleEndian, m.Delta); err != nil {
 				return err
 			}
+		}
+	}
+
+	// TAGS section — structured key-value tags
+	if len(B.StructuredTags.Categories) > 0 || B.StructuredTags.Notes != "" {
+		if _, err := bw.Write([]byte("TAGS")); err != nil {
+			return err
+		}
+		if err := binary.Write(bw, binary.LittleEndian, uint32(len(B.StructuredTags.Categories))); err != nil {
+			return err
+		}
+		for key, val := range B.StructuredTags.Categories {
+			if err := WriteString(bw, key); err != nil {
+				return err
+			}
+			if err := WriteString(bw, val); err != nil {
+				return err
+			}
+		}
+		if err := WriteString(bw, B.StructuredTags.Notes); err != nil {
+			return err
 		}
 	}
 
@@ -678,6 +701,28 @@ func (B *Basic_telemetry_file) Read_BTF(filepath string) error {
 				}
 				B.TimeMutations = append(B.TimeMutations, m)
 			}
+		case "TAGS":
+			var catCount uint32
+			if err := binary.Read(f, binary.LittleEndian, &catCount); err != nil {
+				goto doneScanning
+			}
+			B.StructuredTags.Categories = make(map[string]string, catCount)
+			for i := uint32(0); i < catCount; i++ {
+				key, err := readString(f)
+				if err != nil {
+					goto doneScanning
+				}
+				val, err := readString(f)
+				if err != nil {
+					goto doneScanning
+				}
+				B.StructuredTags.Categories[key] = val
+			}
+			notes, err := readString(f)
+			if err != nil {
+				goto doneScanning
+			}
+			B.StructuredTags.Notes = notes
 		case "MFMD":
 			// Multi-file metadata handled by ReadMultiFileMetadata — seek back and stop
 			f.Seek(-4, io.SeekCurrent)
@@ -873,6 +918,7 @@ func (B *Basic_telemetry_file) LoadMRTFForEditing() error {
 
 	B.Parser.Name = B.Name
 	B.Parser.Tags = B.Tags
+	B.Parser.StructuredTags = B.StructuredTags
 	B.Parser.Channels = []Telemetry_channel{}
 
 	for name, storedChannel := range B.Channels {
@@ -897,4 +943,231 @@ func (B *Basic_telemetry_file) LoadMRTFForEditing() error {
 	}
 
 	return nil
+}
+
+func ReadTagsOnly(filePath string) (types.Structured_tags, string, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return types.Structured_tags{}, "", err
+	}
+	defer f.Close()
+
+	magic := make([]byte, 4)
+	if _, err := io.ReadFull(f, magic); err != nil {
+		return types.Structured_tags{}, "", err
+	}
+	if string(magic) != "MRTF" {
+		return types.Structured_tags{}, "", errors.New("not an MRTF file")
+	}
+
+	// Skip version + endian
+	var ver, endian uint8
+	binary.Read(f, binary.LittleEndian, &ver)
+	binary.Read(f, binary.LittleEndian, &endian)
+
+	name, err := readString(f)
+	if err != nil {
+		return types.Structured_tags{}, "", err
+	}
+
+	// Skip old tags
+	var tagsCount uint32
+	if err := binary.Read(f, binary.LittleEndian, &tagsCount); err != nil {
+		return types.Structured_tags{}, name, err
+	}
+	for i := uint32(0); i < tagsCount; i++ {
+		if _, err := readString(f); err != nil {
+			return types.Structured_tags{}, name, err
+		}
+	}
+
+	// Skip channels (read count, then for each: name, unit, conv, dataLen, seek past data)
+	var chCount uint32
+	if err := binary.Read(f, binary.LittleEndian, &chCount); err != nil {
+		return types.Structured_tags{}, name, nil
+	}
+	for i := uint32(0); i < chCount; i++ {
+		if _, err := readString(f); err != nil {
+			return types.Structured_tags{}, name, nil
+		}
+		if _, err := readString(f); err != nil {
+			return types.Structured_tags{}, name, nil
+		}
+		var conv float64
+		if err := binary.Read(f, binary.LittleEndian, &conv); err != nil {
+			return types.Structured_tags{}, name, nil
+		}
+		var dataLen uint32
+		if err := binary.Read(f, binary.LittleEndian, &dataLen); err != nil {
+			return types.Structured_tags{}, name, nil
+		}
+		if _, err := f.Seek(int64(dataLen)*8, io.SeekCurrent); err != nil {
+			return types.Structured_tags{}, name, nil
+		}
+	}
+
+	// Scan extension sections looking for TAGS
+	for {
+		tag := make([]byte, 4)
+		if _, err := io.ReadFull(f, tag); err != nil {
+			break
+		}
+		switch string(tag) {
+		case "TAGS":
+			var catCount uint32
+			if err := binary.Read(f, binary.LittleEndian, &catCount); err != nil {
+				return types.Structured_tags{}, name, nil
+			}
+			st := types.Structured_tags{Categories: make(map[string]string, catCount)}
+			for i := uint32(0); i < catCount; i++ {
+				key, err := readString(f)
+				if err != nil {
+					return st, name, nil
+				}
+				val, err := readString(f)
+				if err != nil {
+					return st, name, nil
+				}
+				st.Categories[key] = val
+			}
+			notes, err := readString(f)
+			if err != nil {
+				return st, name, nil
+			}
+			st.Notes = notes
+			return st, name, nil
+		case "DLTS":
+			var count uint32
+			if err := binary.Read(f, binary.LittleEndian, &count); err != nil {
+				return types.Structured_tags{}, name, nil
+			}
+			for i := uint32(0); i < count; i++ {
+				f.Seek(16, io.SeekCurrent) // StartTime + EndTime
+				var segChCount uint32
+				if err := binary.Read(f, binary.LittleEndian, &segChCount); err != nil {
+					return types.Structured_tags{}, name, nil
+				}
+				for j := uint32(0); j < segChCount; j++ {
+					if _, err := readString(f); err != nil {
+						return types.Structured_tags{}, name, nil
+					}
+					var dl uint32
+					if err := binary.Read(f, binary.LittleEndian, &dl); err != nil {
+						return types.Structured_tags{}, name, nil
+					}
+					f.Seek(int64(dl)*8, io.SeekCurrent)
+				}
+			}
+		case "NOTS":
+			var count uint32
+			if err := binary.Read(f, binary.LittleEndian, &count); err != nil {
+				return types.Structured_tags{}, name, nil
+			}
+			for i := uint32(0); i < count; i++ {
+				readString(f)              // ID
+				f.Seek(16, io.SeekCurrent) // StartTime + EndTime
+				readString(f)              // Title
+				readString(f)              // Body
+			}
+		case "CLOG":
+			var count uint32
+			if err := binary.Read(f, binary.LittleEndian, &count); err != nil {
+				return types.Structured_tags{}, name, nil
+			}
+			for i := uint32(0); i < count; i++ {
+				f.Seek(1, io.SeekCurrent) // opType byte
+				readString(f)             // opID
+				readString(f)             // payload
+			}
+		case "ORIG":
+			var count uint32
+			if err := binary.Read(f, binary.LittleEndian, &count); err != nil {
+				return types.Structured_tags{}, name, nil
+			}
+			for i := uint32(0); i < count; i++ {
+				readString(f)             // name
+				readString(f)             // unit
+				f.Seek(8, io.SeekCurrent) // conv
+				var dl uint32
+				if err := binary.Read(f, binary.LittleEndian, &dl); err != nil {
+					return types.Structured_tags{}, name, nil
+				}
+				f.Seek(int64(dl)*8, io.SeekCurrent)
+			}
+		case "TMUT":
+			var count uint32
+			if err := binary.Read(f, binary.LittleEndian, &count); err != nil {
+				return types.Structured_tags{}, name, nil
+			}
+			f.Seek(int64(count)*16, io.SeekCurrent) // 2 float64s per mutation
+		default:
+			return types.Structured_tags{}, name, nil
+		}
+	}
+
+	return types.Structured_tags{}, name, nil
+}
+
+func ReadChannelNamesOnly(filePath string) ([]string, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	magic := make([]byte, 4)
+	if _, err := io.ReadFull(f, magic); err != nil {
+		return nil, err
+	}
+	if string(magic) != "MRTF" {
+		return nil, errors.New("not an MRTF file")
+	}
+
+	// Skip version + endian
+	f.Seek(2, io.SeekCurrent)
+
+	// Skip name
+	if _, err := readString(f); err != nil {
+		return nil, err
+	}
+
+	// Skip tags
+	var tagsCount uint32
+	if err := binary.Read(f, binary.LittleEndian, &tagsCount); err != nil {
+		return nil, err
+	}
+	for i := uint32(0); i < tagsCount; i++ {
+		if _, err := readString(f); err != nil {
+			return nil, err
+		}
+	}
+
+	var chCount uint32
+	if err := binary.Read(f, binary.LittleEndian, &chCount); err != nil {
+		return nil, err
+	}
+
+	names := make([]string, 0, chCount)
+	for i := uint32(0); i < chCount; i++ {
+		name, err := readString(f)
+		if err != nil {
+			return names, err
+		}
+		names = append(names, name)
+
+		// Skip unit
+		if _, err := readString(f); err != nil {
+			return names, err
+		}
+		// Skip conv (float64)
+		f.Seek(8, io.SeekCurrent)
+		// Skip data
+		var dataLen uint32
+		if err := binary.Read(f, binary.LittleEndian, &dataLen); err != nil {
+			return names, err
+		}
+		f.Seek(int64(dataLen)*8, io.SeekCurrent)
+	}
+
+	return names, nil
 }

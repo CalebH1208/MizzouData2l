@@ -57,3 +57,66 @@ type File_metadata struct {
 	ChannelNames   []string `json:"channelNames"`
 	Order          int      `json:"order"`
 }
+
+type Structured_tags struct {
+	Categories map[string]string `json:"categories"`
+	Notes      string            `json:"notes"`
+}
+
+type TagCategory struct {
+	Name   string   `json:"name"`
+	Values []string `json:"values"`
+}
+
+type TagCategoryConfig struct {
+	Categories []TagCategory `json:"categories"`
+}
+
+type FileTagInfo struct {
+	FileName       string          `json:"fileName"`
+	FilePath       string          `json:"filePath"`
+	StructuredTags Structured_tags `json:"structuredTags"`
+	ChannelNames   []string        `json:"channelNames"`
+}
+
+type SearchCondition struct {
+	Channel  string  `json:"channel"`
+	Operator string  `json:"operator"`
+	Value    float64 `json:"value"`
+}
+
+type SearchGroup struct {
+	Conditions     []SearchCondition `json:"conditions"`
+	MinDurationSec float64           `json:"minDurationSec"`
+}
+
+type SearchRequest struct {
+	Groups     []SearchGroup     `json:"groups"`
+	TagFilters map[string]string `json:"tagFilters"`
+	PaddingSec float64           `json:"paddingSec"`
+	ResultName string            `json:"resultName"`
+}
+
+type SearchMatch struct {
+	SourceFile string  `json:"sourceFile"`
+	SourceName string  `json:"sourceName"`
+	StartTime  float64 `json:"startTime"`
+	EndTime    float64 `json:"endTime"`
+	Duration   float64 `json:"duration"`
+	GroupIndex int     `json:"groupIndex"`
+}
+
+type SearchResult struct {
+	Matches          []SearchMatch `json:"matches"`
+	ResultPath       string        `json:"resultPath"`
+	TotalFiles       int           `json:"totalFiles"`
+	FilesWithMatches int           `json:"filesWithMatches"`
+}
+
+type SearchProgress struct {
+	Phase     string  `json:"phase"`
+	FileIndex int     `json:"fileIndex"`
+	FileCount int     `json:"fileCount"`
+	FileName  string  `json:"fileName"`
+	Percent   float64 `json:"percent"`
+}

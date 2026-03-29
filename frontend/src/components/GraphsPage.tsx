@@ -330,7 +330,7 @@ const globalViewportRef = useRef<{ start: number; end: number } | null>(null);
           fontWeight: 'bold',
           color: '#F1B82D'
         }}>
-          Graphs & shit
+          Graphs & Tools
         </h1>
         
         <div style={{ width: '120px' }}></div> {/* Spacer for centering */}

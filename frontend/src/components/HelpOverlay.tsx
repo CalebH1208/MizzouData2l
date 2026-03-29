@@ -12,6 +12,7 @@ import downforceDoc from '@docs/tools/Downforce.md';
 import shiftDoc from '@docs/tools/ShiftAnalysis.md';
 import gpsDoc from '@docs/tools/GPSLap.md';
 import exportDoc from '@docs/tools/DataExport.md';
+import kpiSearchDoc from '@docs/KPISearchPage.md';
 
 type HelpDoc = { html: string; meta: { title: string; x: number; y: number; corner: 'bl' | 'br' | 'tl' | 'tr' } };
 
@@ -26,6 +27,7 @@ const helpRegistry: Record<string, HelpDoc> = {
   'tools/shift-analysis':       shiftDoc,
   'tools/gps-lap-analysis':     gpsDoc,
   'tools/data-export':          exportDoc,
+  '/kpi-search':                kpiSearchDoc,
 };
 
 const HELP_STYLES = `

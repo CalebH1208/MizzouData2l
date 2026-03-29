@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import FileTree, { TreeItem } from './FileTree';
-import { LocalFileInfo } from './types';
+import { LocalFileInfo, StructuredTags } from './types';
 import {
   ListLocalFiles,
   CreateLocalFolder,
@@ -9,9 +9,11 @@ import {
   RenameLocalFile,
   GetDataCacheDir,
 } from '../../../wailsjs/go/Backend/Local_file_manager';
+import { GetTagsForFile, SaveTagsForFile } from '../../../wailsjs/go/Backend/Tag_manager';
 import ConfirmModal from '../ConfirmModal';
 import PromptModal from '../PromptModal';
 import AlertModal from '../AlertModal';
+import TagEditor from '../TagEditor';
 
 interface Props {
   selected: string | null;
@@ -48,6 +50,9 @@ const LocalPane: React.FC<Props> = ({
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', message: '', onConfirm: () => {} });
   const [promptModal, setPromptModal] = useState({ isOpen: false, title: '', message: '', defaultValue: '', onConfirm: (_v: string) => {} });
   const [alertModal, setAlertModal] = useState({ isOpen: false, title: '', message: '' });
+  const [showTagPanel, setShowTagPanel] = useState(false);
+  const [fileTags, setFileTags] = useState<StructuredTags>({ categories: {}, notes: '' });
+  const [tagSaving, setTagSaving] = useState(false);
 
   const showAlert = (title: string, message: string) =>
     setAlertModal({ isOpen: true, title, message });
@@ -166,6 +171,32 @@ const LocalPane: React.FC<Props> = ({
   };
 
   const selectedItem = selected ? findItem(selected) : null;
+  const selectedIsMRTF = selectedItem && !selectedItem.is_dir && MRTF_EXT.test(selectedItem.name);
+
+  useEffect(() => {
+    if (selectedIsMRTF && selectedItem) {
+      GetTagsForFile(selectedItem.path).then((tags) => {
+        setFileTags(tags || { categories: {}, notes: '' });
+        setShowTagPanel(true);
+      }).catch(() => {
+        setFileTags({ categories: {}, notes: '' });
+      });
+    } else {
+      setShowTagPanel(false);
+    }
+  }, [selected]);
+
+  const handleSaveTags = async () => {
+    if (!selectedItem || !selectedIsMRTF) return;
+    setTagSaving(true);
+    try {
+      await SaveTagsForFile(selectedItem.path, fileTags);
+    } catch (e: any) {
+      showAlert('Error', 'Failed to save tags: ' + String(e));
+    } finally {
+      setTagSaving(false);
+    }
+  };
 
   // Target directory for new folder / paste operations
   const targetDir = selectedItem
@@ -359,6 +390,34 @@ const LocalPane: React.FC<Props> = ({
           <div style={{ padding: 16, color: '#666', fontSize: 13 }}>No .MRTF files</div>
         )}
       </div>
+
+      {showTagPanel && selectedIsMRTF && (
+        <div style={{
+          borderTop: '2px solid #333',
+          padding: '8px 10px',
+          backgroundColor: '#1a1a2a',
+          flexShrink: 0,
+          maxHeight: 180,
+          overflowY: 'auto',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span style={{ fontSize: 11, color: '#999', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 1 }}>File Tags</span>
+            <button
+              onClick={handleSaveTags}
+              disabled={tagSaving}
+              style={{
+                ...toolbarBtn,
+                padding: '2px 8px',
+                fontSize: 11,
+                opacity: tagSaving ? 0.5 : 1,
+              }}
+            >
+              {tagSaving ? 'Saving...' : 'Save Tags'}
+            </button>
+          </div>
+          <TagEditor tags={fileTags} onChange={setFileTags} />
+        </div>
+      )}
 
       <ConfirmModal {...confirmModal} onCancel={() => setConfirmModal((p) => ({ ...p, isOpen: false }))} />
       <PromptModal {...promptModal} onCancel={() => setPromptModal((p) => ({ ...p, isOpen: false }))} />

@@ -49,3 +49,16 @@ Manages the local data cache and synchronizes files with cloud storage (AWS S3) 
 - **Configure Cloud** — enter AWS credentials and your display name to enable cloud access.
 
 Press **F1** inside the File Manager for detailed transfer and workflow documentation.
+
+---
+
+## KPI Search
+
+Search across multiple telemetry files for specific performance events. Filter files by tags (car, test type, track, etc.), define conditions (e.g., throttle > 90% AND lateral G > 0.5), and find every matching moment across the dataset.
+
+**Use this when:** You need to find specific events across many data files — heavy braking zones, full-throttle cornering, shift points, or any measurable condition.
+
+1. Filter files by tags to narrow the search scope.
+2. Build AND/OR condition groups with channel thresholds and minimum durations.
+3. Run the search — matching segments (with configurable time padding) are merged into a single result file.
+4. Open the result in Graphs to view all matches as a multi-file timeline with break lines and source labels.

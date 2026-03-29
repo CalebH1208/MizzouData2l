@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { SetName, Load_telemetry_file, GetAllChannelNames, GetAllChannelUnvalidatedNames, GetData, ValidateChannel, UnvalidateChannel, SetConversion,GetConversion,SetUnit,GetUnit, DetectAndCorrectUnsignedErrors, ResetDefaults, EnforceRange, SetNegation, GetNegation, ApplyPresetToChannel } from "../../wailsjs/go/backend/Telemetry_file"
+import { SetName, Load_telemetry_file, GetAllChannelNames, GetAllChannelUnvalidatedNames, GetData, ValidateChannel, UnvalidateChannel, SetConversion,GetConversion,SetUnit,GetUnit, DetectAndCorrectUnsignedErrors, ResetDefaults, EnforceRange, SetNegation, GetNegation, ApplyPresetToChannel, SetStructuredTags } from "../../wailsjs/go/backend/Telemetry_file"
 import { LogFile_to_BTF, Write_BTF, Read_BTF, LoadMRTFForEditing } from  "../../wailsjs/go/backend/Basic_telemetry_file"
 import { PreviewValidationChannel } from "../../wailsjs/go/graph/Full_graph"
 import { FindMatchingPresets, GetAllPresets } from "../../wailsjs/go/Backend/Preset_manager"
@@ -11,6 +11,8 @@ import PopUpDialog from './PopUp';
 import TuneGraph from './TuneGraph';
 import PresetManagerModal from './PresetManagerModal';
 import PresetSuggestionModal from './PresetSuggestionModal';
+import TagEditor from './TagEditor';
+import { StructuredTags } from './filemanager/types';
 
 
 const DataEntryPage: React.FC = () => {
@@ -35,6 +37,10 @@ const DataEntryPage: React.FC = () => {
   const [rangeMax, setRangeMax] = useState<string>("");
   const [rangeMin, setRangeMin] = useState<string>("");
   const [negateChannel, setNegateChannel] = useState<boolean>(false);
+
+  // Tag system state
+  const [fileTags, setFileTags] = useState<StructuredTags>({ categories: {}, notes: '' });
+  const [showTags, setShowTags] = useState(false);
 
   // Preset system states
   const [presetMatches, setPresetMatches] = useState<Backend.Preset_match[]>([]);
@@ -194,6 +200,7 @@ const DataEntryPage: React.FC = () => {
 
   const handleSaveData = async () => {
     try {
+      await SetStructuredTags(fileTags);
       await LogFile_to_BTF();
       await Write_BTF(true);
       LogPrint("File stored");
@@ -1104,6 +1111,22 @@ const DataEntryPage: React.FC = () => {
               </button>
               
               <button
+                onClick={() => setShowTags(!showTags)}
+                style={{
+                  backgroundColor: '#335',
+                  color: '#eee',
+                  border: '1px solid #556',
+                  borderRadius: '6px',
+                  padding: '6px 12px',
+                  fontSize: '11px',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {showTags ? '▼ Tags' : '▶ Tags'}
+              </button>
+
+              <button
                 onClick={handleSaveData}
                 disabled={!selectedChannel}
                 style={{
@@ -1138,6 +1161,18 @@ const DataEntryPage: React.FC = () => {
                 Save All Validated Data
               </button>
             </div>
+
+            {showTags && (
+              <div style={{
+                background: '#252530',
+                border: '1px solid #444',
+                borderRadius: 6,
+                padding: 12,
+                marginBottom: 8,
+              }}>
+                <TagEditor tags={fileTags} onChange={setFileTags} />
+              </div>
+            )}
 
             {/* Chart container */}
             <div style={{

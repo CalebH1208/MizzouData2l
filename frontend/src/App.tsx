@@ -4,6 +4,7 @@ import WelcomeScreen from './components/WelcomeScreen';
 import DataEntryPage from './components/DataEntryPage';
 import GraphsPage from './components/GraphsPage';
 import ToolsPage from './components/ToolsPage';
+import KPISearchPage from './components/KPISearchPage';
 import FileManagerModal from './components/FileManagerModal';
 import { HelpProvider } from './contexts/HelpContext';
 import HelpOverlay from './components/HelpOverlay';
@@ -19,6 +20,7 @@ const App: React.FC = () => {
           <Route path="/data-entry" element={<DataEntryPage />} />
           <Route path="/graphs" element={<GraphsPage />} />
           <Route path="/tools" element={<ToolsPage />} />
+          <Route path="/kpi-search" element={<KPISearchPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         <FileManagerModal

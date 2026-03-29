@@ -30,14 +30,15 @@ type CloudConfig struct {
 
 // CloudFileInfo describes a file or virtual folder in S3.
 type CloudFileInfo struct {
-	Name       string `json:"name"`
-	Key        string `json:"key"`    // full S3 object key
-	Prefix     string `json:"prefix"` // parent prefix (virtual dir)
-	IsDir      bool   `json:"is_dir"`
-	Size       int64  `json:"size"`
-	UploadedAt string `json:"uploaded_at"`
-	UploadedBy string `json:"uploaded_by"` // from object metadata
-	ETag       string `json:"etag"`
+	Name       string            `json:"name"`
+	Key        string            `json:"key"`    // full S3 object key
+	Prefix     string            `json:"prefix"` // parent prefix (virtual dir)
+	IsDir      bool              `json:"is_dir"`
+	Size       int64             `json:"size"`
+	UploadedAt string            `json:"uploaded_at"`
+	UploadedBy string            `json:"uploaded_by"` // from object metadata
+	ETag       string            `json:"etag"`
+	Tags       map[string]string `json:"tags"` // structured tags from S3 metadata
 }
 
 // TransferProgress is the Wails event payload emitted during upload/download.
@@ -240,9 +241,15 @@ func (cs *Cloud_storage) GetCloudFileMeta(key string) (CloudFileInfo, error) {
 		Size:       aws.ToInt64(head.ContentLength),
 		ETag:       strings.Trim(aws.ToString(head.ETag), `"`),
 		UploadedBy: head.Metadata["uploaded-by"],
+		Tags:       make(map[string]string),
 	}
 	if head.LastModified != nil {
 		info.UploadedAt = head.LastModified.UTC().Format(time.RFC3339)
+	}
+	for k, v := range head.Metadata {
+		if strings.HasPrefix(k, "tag-") {
+			info.Tags[strings.TrimPrefix(k, "tag-")] = v
+		}
 	}
 	return info, nil
 }
@@ -296,14 +303,23 @@ func (cs *Cloud_storage) UploadFile(localPath, cloudKey string) error {
 		totalBytes: totalBytes,
 	}
 
+	// Build metadata including structured tags from the file
+	uploadMeta := map[string]string{
+		"uploaded-by": cs.config.DisplayName,
+	}
+	if strings.HasSuffix(strings.ToUpper(localPath), ".MRTF") {
+		tags, _, _ := ReadTagsOnly(localPath)
+		for k, v := range tags.Categories {
+			uploadMeta["tag-"+strings.ToLower(k)] = v
+		}
+	}
+
 	_, err = cs.tmClient.UploadObject(context.Background(),
 		&transfermanager.UploadObjectInput{
-			Bucket: aws.String(cs.config.BucketName),
-			Key:    aws.String(cloudKey),
-			Body:   f,
-			Metadata: map[string]string{
-				"uploaded-by": cs.config.DisplayName,
-			},
+			Bucket:   aws.String(cs.config.BucketName),
+			Key:      aws.String(cloudKey),
+			Body:     f,
+			Metadata: uploadMeta,
 		},
 		func(o *transfermanager.Options) {
 			o.ObjectProgressListeners.Register(listener)

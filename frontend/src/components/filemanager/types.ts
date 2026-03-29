@@ -17,6 +17,7 @@ export interface CloudFileInfo {
   uploaded_at: string;
   uploaded_by: string;
   etag: string;
+  tags: Record<string, string>;
 }
 
 export interface TransferProgress {
@@ -37,6 +38,27 @@ export interface SyncRecord {
   local_path: string;
   downloaded_at: string;
   etag: string;
+}
+
+export interface StructuredTags {
+  categories: Record<string, string>;
+  notes: string;
+}
+
+export interface TagCategory {
+  name: string;
+  values: string[];
+}
+
+export interface TagCategoryConfig {
+  categories: TagCategory[];
+}
+
+export interface FileTagInfo {
+  fileName: string;
+  filePath: string;
+  structuredTags: StructuredTags;
+  channelNames: string[];
 }
 
 export type PaneSelection =

@@ -25,6 +25,7 @@ const DELETED_FOLDER: CloudFileInfo = {
   uploaded_at: '',
   uploaded_by: '',
   etag: '',
+  tags: {},
 };
 
 interface Props {
@@ -157,7 +158,10 @@ const CloudPane: React.FC<Props> = ({
         isDir: f.is_dir,
         size: f.is_dir ? undefined : f.size,
         date: f.is_dir ? undefined : f.uploaded_at,
-        meta: f.is_dir ? undefined : f.uploaded_by,
+        meta: f.is_dir ? undefined : [
+          f.uploaded_by,
+          ...(f.tags ? Object.entries(f.tags).map(([k, v]) => `${k}:${v}`) : []),
+        ].filter(Boolean).join(' | '),
         hasConflict: !f.is_dir && conflictKeys.has(f.key),
         _key: f.key,
         children,

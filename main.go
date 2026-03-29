@@ -27,6 +27,9 @@ func main() {
 	syncState := Backend.New_sync_state()
 	cloudStorage := Backend.New_cloud_storage(syncState)
 	localFileManager := Backend.New_local_file_manager()
+	tagManager := Backend.New_tag_manager()
+	kpiSearch := Backend.New_kpi_search(tagManager, localFileManager)
+	kpiSearch.SetFullGraph(tuneGraph)
 
 	if err := presetManager.LoadPresets(); err != nil {
 		println("Warning: Could not load presets:", err.Error())
@@ -44,6 +47,7 @@ func main() {
 		OnStartup: func(ctx context.Context) {
 			app.startup(ctx)
 			cloudStorage.SetContext(ctx)
+			kpiSearch.SetContext(ctx)
 		},
 		Bind: []interface{}{
 			app,
@@ -55,6 +59,8 @@ func main() {
 			cloudStorage,
 			localFileManager,
 			syncState,
+			tagManager,
+			kpiSearch,
 		},
 	})
 

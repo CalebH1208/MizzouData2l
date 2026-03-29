@@ -8,6 +8,8 @@ import (
 	"log"
 	"os"
 	"strconv"
+
+	"MizzouDataTool/backend/types"
 )
 
 type Telemetry_channel struct {
@@ -22,9 +24,10 @@ type Telemetry_channel struct {
 }
 
 type Telemetry_file struct {
-	Name     string              `json:"name"`
-	Tags     []string            `json:"tags"`
-	Channels []Telemetry_channel `json:"channels"`
+	Name           string                `json:"name"`
+	Tags           []string              `json:"tags"`
+	StructuredTags types.Structured_tags `json:"structuredTags"`
+	Channels       []Telemetry_channel   `json:"channels"`
 }
 
 func CreateNewTelemetryFile() *Telemetry_file {
@@ -37,6 +40,10 @@ func CreateNewTelemetryFile() *Telemetry_file {
 
 func (file *Telemetry_file) SetName(newname string) {
 	file.Name = newname
+}
+
+func (file *Telemetry_file) SetStructuredTags(tags types.Structured_tags) {
+	file.StructuredTags = tags
 }
 
 func (file *Telemetry_file) Load_telemetry_file(path string) error {
