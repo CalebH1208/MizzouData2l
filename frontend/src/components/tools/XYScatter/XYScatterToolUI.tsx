@@ -321,6 +321,7 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
 
         {result && (
           <ScatterChart
+            ref={svgRef}
             result={result}
             zoomStack={zoomStack}
             boundsConfig={boundsConfig}

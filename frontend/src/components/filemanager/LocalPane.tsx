@@ -8,6 +8,7 @@ import {
   CopyLocalFile,
   RenameLocalFile,
   GetDataCacheDir,
+  JoinLocalPath,
 } from '../../../wailsjs/go/Backend/Local_file_manager';
 import { GetTagsForFile, SaveTagsForFile } from '../../../wailsjs/go/Backend/Tag_manager';
 import ConfirmModal from '../ConfirmModal';
@@ -73,6 +74,8 @@ const LocalPane: React.FC<Props> = ({
   }, [onDirChange]);
 
   useEffect(() => {
+    setPeekExpanded(new Set());
+    setPeekChildren(new Map());
     GetDataCacheDir().then((dir) => {
       setCacheDir(dir);
       setCurrentDir(dir);
@@ -229,7 +232,8 @@ const LocalPane: React.FC<Props> = ({
         setPromptModal((p) => ({ ...p, isOpen: false }));
         if (!name.trim()) return;
         try {
-          await CreateLocalFolder(targetDir + '/' + name.trim());
+          const folderPath = await JoinLocalPath(targetDir, name.trim());
+          await CreateLocalFolder(folderPath);
           await reloadDir(targetDir);
         } catch (e: any) {
           showAlert('Error', String(e));
@@ -263,8 +267,8 @@ const LocalPane: React.FC<Props> = ({
 
   const handlePaste = async () => {
     if (!clipboard || clipboard.type !== 'local') return;
-    const dst = targetDir + '/' + clipboard.name;
     try {
+      const dst = await JoinLocalPath(targetDir, clipboard.name);
       await CopyLocalFile(clipboard.path, dst);
       await reloadDir(targetDir);
     } catch (e: any) {
@@ -288,8 +292,8 @@ const LocalPane: React.FC<Props> = ({
           return;
         }
         const parentDir = selectedItem.path.replace(/[\\/][^\\/]+$/, '') || currentDir;
-        const dst = parentDir + '/' + trimmed;
         try {
+          const dst = await JoinLocalPath(parentDir, trimmed);
           await RenameLocalFile(selectedItem.path, dst);
           await reloadDir(parentDir);
         } catch (e: any) {
@@ -305,9 +309,9 @@ const LocalPane: React.FC<Props> = ({
     if (!srcPath) return;
     const srcItem = findItem(srcPath);
     if (!srcItem) return;
-    const dstPath = folderPath + '/' + srcItem.name;
-    if (dstPath === srcPath) return;
     try {
+      const dstPath = await JoinLocalPath(folderPath, srcItem.name);
+      if (dstPath === srcPath) return;
       await RenameLocalFile(srcPath, dstPath);
       const srcParent = srcPath.replace(/[\\/][^\\/]+$/, '') || currentDir;
       await reloadDir(srcParent);
@@ -391,7 +395,7 @@ const LocalPane: React.FC<Props> = ({
         )}
       </div>
 
-      {showTagPanel && selectedIsMRTF && (
+      {/* {showTagPanel && selectedIsMRTF && (
         <div style={{
           borderTop: '2px solid #333',
           padding: '8px 10px',
@@ -417,7 +421,7 @@ const LocalPane: React.FC<Props> = ({
           </div>
           <TagEditor tags={fileTags} onChange={setFileTags} />
         </div>
-      )}
+      )} */}
 
       <ConfirmModal {...confirmModal} onCancel={() => setConfirmModal((p) => ({ ...p, isOpen: false }))} />
       <PromptModal {...promptModal} onCancel={() => setPromptModal((p) => ({ ...p, isOpen: false }))} />

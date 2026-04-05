@@ -1,8 +1,8 @@
-import { DownforcePreset } from './types';
+import { PowertrainPreset } from './types';
 import { SaveFileDialog, WriteFile } from '../../../../wailsjs/go/main/App';
 
-export const loadPresets = (): DownforcePreset[] => {
-  const saved = localStorage.getItem('downforceToolPresets');
+export const loadPresets = (): PowertrainPreset[] => {
+  const saved = localStorage.getItem('powertrainToolPresets');
   if (saved) {
     try {
       return JSON.parse(saved);
@@ -14,8 +14,8 @@ export const loadPresets = (): DownforcePreset[] => {
   return [];
 };
 
-export const savePresets = (presets: DownforcePreset[]): void => {
-  localStorage.setItem('downforceToolPresets', JSON.stringify(presets));
+export const savePresets = (presets: PowertrainPreset[]): void => {
+  localStorage.setItem('powertrainToolPresets', JSON.stringify(presets));
 };
 
 export const exportToPNG = async (
@@ -26,36 +26,16 @@ export const exportToPNG = async (
   if (!svgRef || !result) return;
 
   try {
-    const defaultFilename = `downforce_timeseries.png`;
+    const defaultFilename = `powertrain_analysis.png`;
     const filePath = await SaveFileDialog(defaultFilename);
-
     if (!filePath) return;
 
     const svgElement = svgRef;
-
-    // Use viewBox dimensions so the full logical SVG is captured, not just the rendered element size
     const viewBox = svgElement.viewBox.baseVal;
     const svgWidth = viewBox.width || svgElement.clientWidth;
     const svgHeight = viewBox.height || svgElement.clientHeight;
 
-    // Replace cursor-value legend labels (e.g. "Speed: 45.23 mph") with clean labels ("Speed (mph)")
-    const cleanLabels: Record<string, string> = {
-      'Speed': 'mph',
-      'Total DF': 'N',
-      'Front Balance': '%',
-    };
     const svgClone = svgElement.cloneNode(true) as SVGSVGElement;
-    svgClone.querySelectorAll('text').forEach(el => {
-      const content = el.textContent ?? '';
-      for (const [name, unit] of Object.entries(cleanLabels)) {
-        if (content.startsWith(`${name}:`)) {
-          el.textContent = `${name} (${unit})`;
-          break;
-        }
-      }
-    });
-
-    // Remove cursor line
     svgClone.querySelectorAll('line[stroke="#00FF00"]').forEach(el => el.remove());
 
     const svgString = new XMLSerializer().serializeToString(svgClone);
@@ -79,16 +59,13 @@ export const exportToPNG = async (
 
       canvas.toBlob(async (blob) => {
         if (!blob) return;
-
         try {
           const arrayBuffer = await blob.arrayBuffer();
           const uint8Array = new Uint8Array(arrayBuffer);
           await WriteFile(filePath, Array.from(uint8Array));
         } catch (writeErr) {
-          console.error('Failed to write file:', writeErr);
           setError(`Failed to save file: ${writeErr}`);
         }
-
         URL.revokeObjectURL(url);
       }, 'image/png');
     };
@@ -100,7 +77,6 @@ export const exportToPNG = async (
 
     img.src = url;
   } catch (err) {
-    console.error('Failed to export PNG:', err);
     setError(`Export failed: ${err}`);
   }
 };
@@ -117,7 +93,6 @@ export const rollingAverage = (data: number[], windowSize: number): number[] => 
 
     let sum = 0;
     let count = 0;
-
     for (let j = start; j < end; j++) {
       if (isFinite(data[j]) && !isNaN(data[j])) {
         sum += data[j];
@@ -130,23 +105,3 @@ export const rollingAverage = (data: number[], windowSize: number): number[] => 
 
   return smoothed;
 };
-
-export function throttle<T extends (...args: any[]) => any>(func: T, wait: number): (...args: Parameters<T>) => void {
-  let timeout: NodeJS.Timeout | null = null;
-  let lastRan: number = 0;
-
-  return function(...args: Parameters<T>) {
-    const now = Date.now();
-
-    if (now - lastRan >= wait) {
-      func(...args);
-      lastRan = now;
-    } else {
-      if (timeout) clearTimeout(timeout);
-      timeout = setTimeout(() => {
-        func(...args);
-        lastRan = Date.now();
-      }, wait - (now - lastRan));
-    }
-  };
-}

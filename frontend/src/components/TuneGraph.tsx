@@ -207,9 +207,9 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
   const baseScale = Math.min(width / 1000, 1.5);
   const margin = {
     top: Math.round(20 * baseScale),
-    right: Math.round(50 * baseScale),
+    right: Math.round(35 * baseScale),
     bottom: Math.round(50 * baseScale),
-    left: Math.round(60 * baseScale)
+    left: Math.round(35 * baseScale)
   };
 
   const chartWidth = Math.max(0, width - margin.left - margin.right);

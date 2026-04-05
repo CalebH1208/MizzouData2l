@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, forwardRef } from 'react';
 import * as d3 from 'd3';
 import { ScatterPoint, ZoomState, BoundsConfig } from './types';
 import { Backend } from '../../../../wailsjs/go/models';
@@ -11,12 +11,12 @@ interface ScatterChartProps {
   onZoom: (zoom: ZoomState) => void;
 }
 
-export const ScatterChart: React.FC<ScatterChartProps> = ({
+export const ScatterChart = forwardRef<SVGSVGElement, ScatterChartProps>(({
   result,
   zoomStack,
   boundsConfig,
   onZoom
-}) => {
+}, ref) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const isDragging = useRef(false);
   const dragStart = useRef<{ x: number; y: number } | null>(null);
@@ -355,7 +355,11 @@ export const ScatterChart: React.FC<ScatterChartProps> = ({
       minHeight: 0,
     }}>
       <svg
-        ref={svgRef}
+        ref={(el) => {
+          (svgRef as React.MutableRefObject<SVGSVGElement | null>).current = el;
+          if (typeof ref === 'function') ref(el);
+          else if (ref) (ref as React.MutableRefObject<SVGSVGElement | null>).current = el;
+        }}
         style={{
           width: '100%',
           height: '100%',
@@ -411,4 +415,6 @@ export const ScatterChart: React.FC<ScatterChartProps> = ({
       )}
     </div>
   );
-};
+});
+
+ScatterChart.displayName = 'ScatterChart';

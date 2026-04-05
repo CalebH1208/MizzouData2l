@@ -6,6 +6,8 @@ import DownforceToolUI from './tools/DownforceToolUI';
 import ShiftAnalysisToolUI from './tools/ShiftAnalysisToolUI';
 import GPSLapToolUI from './tools/GPSLapToolUI';
 import DataExportToolUI from './tools/DataExportToolUI';
+import PowertrainToolUI from './tools/PowertrainToolUI';
+import RideFrequencyToolUI from './tools/RideFrequencyToolUI';
 
 interface ToolExecutorProps {
   fragment: Backend.Data_fragment;
@@ -37,6 +39,10 @@ const ToolExecutor: React.FC<ToolExecutorProps> = ({
         return <GPSLapToolUI fragment={fragment} />;
       case 'data-export':
         return <DataExportToolUI fragment={fragment} />;
+      case 'powertrain-analysis':
+        return <PowertrainToolUI fragment={fragment} />;
+      case 'ride-frequency':
+        return <RideFrequencyToolUI fragment={fragment} />;
       default:
         return (
           <div style={{

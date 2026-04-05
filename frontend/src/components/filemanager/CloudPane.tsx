@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import FileTree, { TreeItem } from './FileTree';
-import { CloudFileInfo } from './types';
+import { CloudFileInfo, formatDate, formatBytes } from './types';
 import {
   ListFiles,
   DeleteCloudFile,
@@ -9,6 +9,8 @@ import {
   CopyCloudFile,
   IsConfigured,
   MoveToDeleted,
+  GetCloudFileMeta,
+  DeleteCloudFolder,
 } from '../../../wailsjs/go/Backend/Cloud_storage';
 import ConfirmModal from '../ConfirmModal';
 import PromptModal from '../PromptModal';
@@ -31,13 +33,13 @@ const DELETED_FOLDER: CloudFileInfo = {
 interface Props {
   selected: string | null;
   onSelect: (key: string, item: CloudFileInfo) => void;
-  conflictKeys: Set<string>;
   refreshToken: number;
   onConfigureClick: () => void;
+  onPrefixChange?: (prefix: string) => void;
 }
 
 const CloudPane: React.FC<Props> = ({
-  selected, onSelect, conflictKeys, refreshToken, onConfigureClick,
+  selected, onSelect, refreshToken, onConfigureClick, onPrefixChange,
 }) => {
   const [configured, setConfigured] = useState(false);
   const [currentPrefix, setCurrentPrefix] = useState('');
@@ -46,7 +48,9 @@ const CloudPane: React.FC<Props> = ({
   const [peekExpanded, setPeekExpanded] = useState<Set<string>>(new Set());
   const [peekChildren, setPeekChildren] = useState<Map<string, CloudFileInfo[]>>(new Map());
   const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [selectedMeta, setSelectedMeta] = useState<CloudFileInfo | null>(null);
 
   const [cloudClipboard, setCloudClipboard] = useState<{ key: string; name: string } | null>(null);
 
@@ -59,6 +63,16 @@ const CloudPane: React.FC<Props> = ({
   const showAlert = (title: string, message: string) =>
     setAlertModal({ isOpen: true, title, message });
 
+  const findItem = useCallback((key: string): CloudFileInfo | undefined => {
+    const direct = items.find((i) => i.key === key);
+    if (direct) return direct;
+    for (const children of peekChildren.values()) {
+      const found = children.find((i) => i.key === key);
+      if (found) return found;
+    }
+    return undefined;
+  }, [items, peekChildren]);
+
   const loadPrefix = useCallback(async (prefix: string) => {
     setLoading(true);
     setError('');
@@ -66,7 +80,6 @@ const CloudPane: React.FC<Props> = ({
       const result = await ListFiles(prefix);
       let filtered = (result || []).filter((f) => f.is_dir || MRTF_EXT.test(f.name));
 
-      // At root: always pin Deleted/ at top
       if (prefix === '') {
         const hasDeleted = filtered.some((f) => f.key === 'Deleted/');
         if (!hasDeleted) {
@@ -81,14 +94,59 @@ const CloudPane: React.FC<Props> = ({
 
       setItems(filtered);
       setCurrentPrefix(prefix);
+      onPrefixChange?.(prefix);
     } catch (e: any) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [onPrefixChange]);
+
+  // Reload current view and re-fetch all expanded peek folders so stale data disappears
+  // but the user's expand state is preserved
+  const reloadAll = useCallback(async () => {
+    // Snapshot which folders are currently expanded
+    const expandedKeys = new Set(peekExpanded);
+    // Clear cached children so they get re-fetched
+    setPeekChildren(new Map());
+    // Reload top-level
+    await loadPrefix(currentPrefix);
+    // Re-fetch children for each expanded folder
+    for (const key of expandedKeys) {
+      ListFiles(key).then((children) => {
+        const filtered = (children || []).filter((f) => f.is_dir || MRTF_EXT.test(f.name));
+        setPeekChildren((cm) => {
+          const nm = new Map(cm);
+          nm.set(key, filtered);
+          return nm;
+        });
+      }).catch(() => {
+        // Folder may have been deleted — collapse it
+        setPeekExpanded((prev) => {
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
+      });
+    }
+  }, [loadPrefix, currentPrefix, peekExpanded]);
+
+  // Wrap an async S3 mutation: set busy, run it, reload, clear busy
+  const runMutation = useCallback(async (fn: () => Promise<void>) => {
+    setBusy(true);
+    try {
+      await fn();
+      reloadAll();
+    } catch (e: any) {
+      showAlert('Error', String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [reloadAll]);
 
   useEffect(() => {
+    setPeekExpanded(new Set());
+    setPeekChildren(new Map());
     IsConfigured().then((ok) => {
       setConfigured(ok);
       if (ok) loadPrefix('');
@@ -111,9 +169,8 @@ const CloudPane: React.FC<Props> = ({
     loadPrefix(prev);
   };
 
-  // Single-click on folder: toggle peek (show children inline)
   const handleToggleExpand = useCallback((key: string) => {
-    const item = items.find((i) => i.key === key);
+    const item = findItem(key);
     if (!item?.is_dir) return;
 
     setPeekExpanded((prev) => {
@@ -138,11 +195,10 @@ const CloudPane: React.FC<Props> = ({
       });
       return cm;
     });
-  }, [items]);
+  }, [findItem]);
 
-  // Double-click on folder: navigate into it
   const handleDoubleClick = (key: string) => {
-    const item = items.find((i) => i.key === key);
+    const item = findItem(key);
     if (item?.is_dir) navigateTo(item.key);
   };
 
@@ -158,108 +214,92 @@ const CloudPane: React.FC<Props> = ({
         isDir: f.is_dir,
         size: f.is_dir ? undefined : f.size,
         date: f.is_dir ? undefined : f.uploaded_at,
-        meta: f.is_dir ? undefined : [
-          f.uploaded_by,
-          ...(f.tags ? Object.entries(f.tags).map(([k, v]) => `${k}:${v}`) : []),
-        ].filter(Boolean).join(' | '),
-        hasConflict: !f.is_dir && conflictKeys.has(f.key),
         _key: f.key,
         children,
       };
-    }), [peekExpanded, peekChildren, conflictKeys]);
+    }), [peekExpanded, peekChildren]);
 
-  const handleSelect = (key: string) => {
-    // Check top-level items first, then peek children
-    let item = items.find((i) => i.key === key);
-    if (!item) {
-      for (const children of peekChildren.values()) {
-        item = children.find((i) => i.key === key);
-        if (item) break;
+  const handleSelect = useCallback((key: string) => {
+    const item = findItem(key);
+    if (item) {
+      onSelect(key, item);
+      if (!item.is_dir) {
+        GetCloudFileMeta(key).then(setSelectedMeta).catch(() => setSelectedMeta(null));
+      } else {
+        setSelectedMeta(null);
       }
     }
-    if (item) onSelect(key, item);
-  };
+  }, [findItem, onSelect]);
 
   const handleNewFolder = () => {
+    const targetPrefix = selectedItem?.is_dir ? selectedItem.key : currentPrefix;
     setPromptModal({
       isOpen: true,
       title: 'New Cloud Folder',
-      message: 'Enter folder name:',
+      message: `Create folder in: /${targetPrefix || '(root)'}`,
       defaultValue: '',
       onConfirm: async (name) => {
         setPromptModal((p) => ({ ...p, isOpen: false }));
         if (!name.trim()) return;
-        try {
-          await CreateCloudFolder(currentPrefix + name.trim());
-          loadPrefix(currentPrefix);
-        } catch (e: any) {
-          showAlert('Error', String(e));
-        }
+        await runMutation(() => CreateCloudFolder(targetPrefix + name.trim()));
       },
     });
   };
 
   const handleDelete = () => {
-    if (!selected) return;
-    let item = items.find((i) => i.key === selected);
-    if (!item) {
-      for (const children of peekChildren.values()) {
-        item = children.find((i) => i.key === selected);
-        if (item) break;
-      }
+    if (!selected || busy) return;
+    const item = findItem(selected);
+    if (!item) return;
+
+    if (item.is_dir) {
+      setConfirmModal({
+        isOpen: true,
+        title: 'Delete Folder',
+        message: `Delete folder "${item.name}"? The folder must be empty.`,
+        onConfirm: async () => {
+          setConfirmModal((p) => ({ ...p, isOpen: false }));
+          await runMutation(() => DeleteCloudFolder(item.key));
+        },
+      });
+      return;
     }
-    if (!item || item.is_dir) return;
 
     const isInDeleted = item.key.startsWith('Deleted/');
     if (isInDeleted) {
-      // Permanently delete with confirmation
       setConfirmModal({
         isOpen: true,
         title: 'Permanently Delete',
         message: `"${item.name}" will be permanently deleted from cloud storage. This cannot be undone.`,
         onConfirm: async () => {
           setConfirmModal((p) => ({ ...p, isOpen: false }));
-          try {
-            await DeleteCloudFile(item!.key);
-            loadPrefix(currentPrefix);
-          } catch (e: any) {
-            showAlert('Error', String(e));
-          }
+          await runMutation(() => DeleteCloudFile(item.key));
         },
       });
     } else {
-      // Soft delete: move to Deleted/ (no confirmation needed — it's recoverable)
-      MoveToDeleted(item.key)
-        .then(() => loadPrefix(currentPrefix))
-        .catch((e: any) => showAlert('Error', String(e)));
+      runMutation(() => MoveToDeleted(item.key));
     }
   };
 
   const handleCopy = () => {
     if (!selected) return;
-    const item = items.find((i) => i.key === selected);
+    const item = findItem(selected);
     if (!item || item.is_dir) return;
     setCloudClipboard({ key: item.key, name: item.name });
   };
 
   const handlePaste = async () => {
-    if (!cloudClipboard) return;
+    if (!cloudClipboard || busy) return;
     const dstKey = currentPrefix + cloudClipboard.name;
     if (dstKey === cloudClipboard.key) {
       showAlert('Cannot Paste', 'Source and destination are the same location.');
       return;
     }
-    try {
-      await CopyCloudFile(cloudClipboard.key, dstKey);
-      loadPrefix(currentPrefix);
-    } catch (e: any) {
-      showAlert('Error', String(e));
-    }
+    await runMutation(() => CopyCloudFile(cloudClipboard.key, dstKey));
   };
 
   const handleRename = () => {
-    if (!selected) return;
-    const item = items.find((i) => i.key === selected);
+    if (!selected || busy) return;
+    const item = findItem(selected);
     if (!item || item.is_dir) return;
     setPromptModal({
       isOpen: true,
@@ -275,12 +315,7 @@ const CloudPane: React.FC<Props> = ({
           return;
         }
         const newKey = currentPrefix + trimmed;
-        try {
-          await RenameCloudFile(item.key, newKey);
-          loadPrefix(currentPrefix);
-        } catch (e: any) {
-          showAlert('Error', String(e));
-        }
+        await runMutation(() => RenameCloudFile(item.key, newKey));
       },
     });
   };
@@ -288,28 +323,15 @@ const CloudPane: React.FC<Props> = ({
   const handleMoveToFolder = async (folderKey: string) => {
     const srcKey = draggedKey.current;
     draggedKey.current = null;
-    if (!srcKey) return;
-    const srcItem = items.find((i) => i.key === srcKey);
+    if (!srcKey || busy) return;
+    const srcItem = findItem(srcKey);
     if (!srcItem) return;
     const dstKey = folderKey + srcItem.name;
     if (dstKey === srcKey) return;
-    try {
-      await RenameCloudFile(srcKey, dstKey);
-      loadPrefix(currentPrefix);
-    } catch (e: any) {
-      showAlert('Error', String(e));
-    }
+    await runMutation(() => RenameCloudFile(srcKey, dstKey));
   };
 
-  const selectedItem = selected
-    ? (items.find((i) => i.key === selected) ?? (() => {
-        for (const children of peekChildren.values()) {
-          const f = children.find((i) => i.key === selected);
-          if (f) return f;
-        }
-        return null;
-      })())
-    : null;
+  const selectedItem = selected ? findItem(selected) ?? null : null;
 
   if (!configured) {
     return (
@@ -369,7 +391,7 @@ const CloudPane: React.FC<Props> = ({
                 e.currentTarget.style.color = '#F1B82D';
               }}
             >
-              ← Back
+              &#8592; Back
             </button>
           )}
         </div>
@@ -384,21 +406,53 @@ const CloudPane: React.FC<Props> = ({
         borderBottom: '2px solid #333', flexShrink: 0, flexWrap: 'wrap',
         backgroundColor: '#333333',
       }}>
-        <button onClick={handleNewFolder} style={toolbarBtn}>+ Folder</button>
-        <button onClick={handleCopy} disabled={!selectedItem || selectedItem.is_dir} style={toolbarBtn}>Copy</button>
-        <button onClick={handlePaste} disabled={!cloudClipboard} style={toolbarBtn}>Paste</button>
-        <button onClick={handleRename} disabled={!selectedItem || selectedItem.is_dir} style={toolbarBtn}>Rename</button>
+        <button onClick={handleNewFolder} disabled={busy} style={toolbarBtn}>+ Folder</button>
+        <button onClick={handleCopy} disabled={busy || !selectedItem || selectedItem.is_dir} style={toolbarBtn}>Copy</button>
+        <button onClick={handlePaste} disabled={busy || !cloudClipboard} style={toolbarBtn}>Paste</button>
+        <button onClick={handleRename} disabled={busy || !selectedItem || selectedItem.is_dir} style={toolbarBtn}>Rename</button>
         <button
           onClick={handleDelete}
-          disabled={!selectedItem || selectedItem.is_dir}
+          disabled={busy || !selectedItem}
           style={{ ...toolbarBtn, borderColor: '#ff6b6b', color: '#ff6b6b' }}
         >
           {selectedItem && selectedItem.key.startsWith('Deleted/') ? 'Delete Forever' : 'Delete'}
         </button>
       </div>
 
+      {/* Detail strip — always visible */}
+      <div style={{
+        padding: '2px 10px', borderBottom: '1px solid #333',
+        backgroundColor: '#111', fontSize: 11, color: '#888',
+        display: 'flex', gap: 12, flexShrink: 0, minHeight: 18, alignItems: 'center',
+      }}>
+        {selectedMeta && !selectedItem?.is_dir ? (
+          <>
+            {selectedMeta.uploaded_by && <span>By: <strong style={{ color: '#aaa' }}>{selectedMeta.uploaded_by}</strong></span>}
+            {selectedMeta.uploaded_at && <span>{formatDate(selectedMeta.uploaded_at)}</span>}
+            {selectedMeta.size > 0 && <span>{formatBytes(selectedMeta.size)}</span>}
+            {selectedMeta.tags && Object.keys(selectedMeta.tags).length > 0 && (
+              <span>{Object.entries(selectedMeta.tags).map(([k, v]) => `${k}:${v}`).join(', ')}</span>
+            )}
+          </>
+        ) : selectedItem?.is_dir ? (
+          <span style={{ color: '#666' }}>Folder: {selectedItem.name}</span>
+        ) : (
+          <span style={{ color: '#555' }}>No file selected</span>
+        )}
+      </div>
+
       {/* Tree */}
-      <div style={{ flex: 1, overflowY: 'auto', backgroundColor: 'black' }}>
+      <div style={{ flex: 1, overflowY: 'auto', backgroundColor: 'black', position: 'relative' }}>
+        {/* Busy overlay */}
+        {busy && (
+          <div style={{
+            position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 10,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <span style={{ color: '#F1B82D', fontSize: 13 }}>Working...</span>
+          </div>
+        )}
         {loading && <div style={{ padding: 16, color: '#aaa', fontSize: 13 }}>Loading...</div>}
         {error && <div style={{ padding: 16, color: '#ff6b6b', fontSize: 13 }}>{error}</div>}
         {!loading && !error && (

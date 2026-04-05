@@ -77,7 +77,7 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
         svg.attr('viewBox', `0 0 ${width} ${height}`)
            .attr('preserveAspectRatio', 'xMidYMid meet');
 
-        const margin = { top: 50, right: 120, bottom: 70, left: 90 };
+        const margin = { top: 50, right: 30, bottom: 75, left: 80 };
         const plotWidth = width - margin.left - margin.right;
         const plotHeight = height - margin.top - margin.bottom;
 
@@ -175,17 +175,11 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
           return;
         }
 
-        const dfExtent = d3.extent(validDownforce);
-        const dfMin = (dfExtent[0] as number | undefined) ?? 0;
-        const dfMax = (dfExtent[1] as number | undefined) ?? 100;
-        const dfRange = dfMax - dfMin;
-        const downforceScale = d3.scaleLinear()
-          .domain([dfMin - dfRange * 0.75, dfMax])
-          .range([plotHeight, 0]);
-
-        const balanceScale = d3.scaleLinear()
-          .domain([0, 100])
-          .range([plotHeight, plotHeight * 0.75]);
+        // Each panel occupies exactly 1/3 of plotHeight
+        // Top third: Speed (0 to plotHeight/3)
+        // Middle third: Downforce (plotHeight/3 to 2*plotHeight/3)
+        // Bottom third: Balance (2*plotHeight/3 to plotHeight)
+        const third = plotHeight / 3;
 
         const speedExtent = d3.extent(validSpeeds);
         const speedMin = (speedExtent[0] as number | undefined) ?? 0;
@@ -193,7 +187,19 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
         const speedRange = speedMax - speedMin;
         const speedScale = d3.scaleLinear()
           .domain([speedMin - speedRange * 0.1, speedMax + speedRange * 0.1])
-          .range([plotHeight * 0.66, plotHeight * 0.33]);
+          .range([third, 0]);
+
+        const dfExtent = d3.extent(validDownforce);
+        const dfMin = (dfExtent[0] as number | undefined) ?? 0;
+        const dfMax = (dfExtent[1] as number | undefined) ?? 100;
+        const dfRange = dfMax - dfMin;
+        const downforceScale = d3.scaleLinear()
+          .domain([dfMin - dfRange * 0.1, dfMax + dfRange * 0.1])
+          .range([2 * third, third]);
+
+        const balanceScale = d3.scaleLinear()
+          .domain([0, 100])
+          .range([plotHeight, 2 * third]);
 
         const g = svg.append('g')
           .attr('transform', `translate(${margin.left},${margin.top})`);
@@ -211,8 +217,8 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
           const steadyCount = isSteadyState.filter((s: any) => s === true || s === 'true').length;
           const unsteadyCount = isSteadyState.length - steadyCount;
 
-          (window as any).runtime.LogInfo(`[DownforceUI] isSteadyState length: ${isSteadyState.length}, steady: ${steadyCount}, unsteady: ${unsteadyCount}`);
-          (window as any).runtime.LogInfo(`[DownforceUI] First 10 values: ${isSteadyState.slice(0, 10).join(', ')}`);
+          //(window as any).runtime.LogInfo(`[DownforceUI] isSteadyState length: ${isSteadyState.length}, steady: ${steadyCount}, unsteady: ${unsteadyCount}`);
+          //(window as any).runtime.LogInfo(`[DownforceUI] First 10 values: ${isSteadyState.slice(0, 10).join(', ')}`);
 
           const unsteadyRegions: Array<{start: number, end: number}> = [];
           let inUnsteady = false;
@@ -231,11 +237,11 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
             unsteadyRegions.push({ start: unsteadyStart, end: times[times.length - 1] });
           }
 
-          (window as any).runtime.LogInfo(`[DownforceUI] Found ${unsteadyRegions.length} unsteady regions`);
+          //(window as any).runtime.LogInfo(`[DownforceUI] Found ${unsteadyRegions.length} unsteady regions`);
 
           unsteadyRegions.forEach((region, idx) => {
             if (idx < 5) {
-              (window as any).runtime.LogInfo(`[DownforceUI]   Region ${idx}: ${region.start.toFixed(2)}s - ${region.end.toFixed(2)}s`);
+              //(window as any).runtime.LogInfo(`[DownforceUI]   Region ${idx}: ${region.start.toFixed(2)}s - ${region.end.toFixed(2)}s`);
             }
             g.append('rect')
               .attr('x', xScale(region.start))
@@ -243,12 +249,20 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
               .attr('width', xScale(region.end) - xScale(region.start))
               .attr('height', plotHeight)
               .attr('fill', '#ff0000')
-              .attr('opacity', 0.15)
+              .attr('opacity', 0.35)
               .attr('clip-path', 'url(#chart-clip)');
           });
         } else {
-          (window as any).runtime.LogWarning('[DownforceUI] No isSteadyState data available');
+          //(window as any).runtime.LogWarning('[DownforceUI] No isSteadyState data available');
         }
+
+        // Panel divider lines
+        [third, 2 * third].forEach(y => {
+          g.append('line')
+            .attr('x1', 0).attr('x2', plotWidth)
+            .attr('y1', y).attr('y2', y)
+            .attr('stroke', '#555').attr('stroke-width', 1);
+        });
 
         g.append('g')
           .attr('class', 'grid-x')
@@ -267,43 +281,64 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
 
         g.append('text')
           .attr('x', plotWidth / 2)
-          .attr('y', plotHeight + 50)
+          .attr('y', plotHeight + 65)
           .attr('text-anchor', 'middle')
           .attr('fill', '#F1B82D')
           .attr('font-size', '13px')
           .attr('font-weight', 'bold')
           .text('Time (s)');
 
-        const yAxisLeft = g.append('g')
-          .attr('class', 'axis-y-left')
-          .call(d3.axisLeft(downforceScale).ticks(6))
+        // Speed axis (top third)
+        const yAxisSpeed = g.append('g')
+          .attr('class', 'axis-y-speed')
+          .call(d3.axisLeft(speedScale).ticks(4))
+          .call(g => g.selectAll('text').attr('fill', '#ff00ff').attr('font-size', '10px'))
+          .call(g => g.selectAll('line').attr('stroke', '#ff00ff'))
+          .call(g => g.select('.domain').attr('stroke', '#ff00ff'));
+
+        yAxisSpeed.append('text')
+          .attr('transform', 'rotate(-90)')
+          .attr('x', -(third / 2))
+          .attr('y', -60)
+          .attr('text-anchor', 'middle')
+          .attr('fill', '#ff00ff')
+          .attr('font-size', '11px')
+          .attr('font-weight', 'bold')
+          .text('Speed (mph)');
+
+        // Downforce axis (middle third)
+        const yAxisDownforce = g.append('g')
+          .attr('class', 'axis-y-downforce')
+          .call(d3.axisLeft(downforceScale).ticks(4))
           .call(g => g.selectAll('text').attr('fill', '#3b82f6').attr('font-size', '10px'))
           .call(g => g.selectAll('line').attr('stroke', '#3b82f6'))
           .call(g => g.select('.domain').attr('stroke', '#3b82f6'));
 
-        yAxisLeft.append('text')
+        yAxisDownforce.append('text')
           .attr('transform', 'rotate(-90)')
-          .attr('x', -plotHeight / 2)
-          .attr('y', -65)
+          .attr('x', -(third + third / 2))
+          .attr('y', -60)
           .attr('text-anchor', 'middle')
           .attr('fill', '#3b82f6')
-          .attr('font-size', '12px')
+          .attr('font-size', '11px')
           .attr('font-weight', 'bold')
           .text('Downforce (N)');
 
-        const yAxisRight = g.append('g')
-          .attr('class', 'axis-y-right')
-          .attr('transform', `translate(${plotWidth}, 0)`)
-          .call(d3.axisRight(balanceScale).ticks(6))
+        // Balance axis (bottom third)
+        const yAxisBalance = g.append('g')
+          .attr('class', 'axis-y-balance')
+          .call(d3.axisLeft(balanceScale).ticks(4))
           .call(g => g.selectAll('text').attr('fill', '#4ade80').attr('font-size', '10px'))
           .call(g => g.selectAll('line').attr('stroke', '#4ade80'))
           .call(g => g.select('.domain').attr('stroke', '#4ade80'));
 
-        yAxisRight.append('text')
-          .attr('transform', `translate(70, ${plotHeight / 2}) rotate(-90)`)
+        yAxisBalance.append('text')
+          .attr('transform', 'rotate(-90)')
+          .attr('x', -(2 * third + third / 2))
+          .attr('y', -60)
           .attr('text-anchor', 'middle')
           .attr('fill', '#4ade80')
-          .attr('font-size', '12px')
+          .attr('font-size', '11px')
           .attr('font-weight', 'bold')
           .text('Front Balance (%)');
 
@@ -321,30 +356,7 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
           .x(d => d[0])
           .y(d => d[1]);
 
-        const downforceData: Array<[number, number]> = downsampledIndices.map(i =>
-          [xScale(times[i]), downforceScale(totalDownforce[i])]
-        );
-
-        g.append('path')
-          .datum(downforceData)
-          .attr('fill', 'none')
-          .attr('stroke', '#3b82f6')
-          .attr('stroke-width', 2.5)
-          .attr('d', lineGenerator)
-          .attr('clip-path', 'url(#chart-clip)');
-
-        const balanceData: Array<[number, number]> = downsampledIndices.map(i =>
-          [xScale(times[i]), balanceScale(frontPercent[i])]
-        );
-
-        g.append('path')
-          .datum(balanceData)
-          .attr('fill', 'none')
-          .attr('stroke', '#4ade80')
-          .attr('stroke-width', 2.5)
-          .attr('d', lineGenerator)
-          .attr('clip-path', 'url(#chart-clip)');
-
+        // Speed (top third)
         const speedData: Array<[number, number]> = downsampledIndices.map(i =>
           [xScale(times[i]), speedScale(speeds[i])]
         );
@@ -357,49 +369,81 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
           .attr('d', lineGenerator)
           .attr('clip-path', 'url(#chart-clip)');
 
-        const legend = g.append('g')
-          .attr('transform', `translate(15, 15)`);
+        // Downforce (middle third)
+        const downforceData: Array<[number, number]> = downsampledIndices.map(i =>
+          [xScale(times[i]), downforceScale(totalDownforce[i])]
+        );
+
+        g.append('path')
+          .datum(downforceData)
+          .attr('fill', 'none')
+          .attr('stroke', '#3b82f6')
+          .attr('stroke-width', 2.5)
+          .attr('d', lineGenerator)
+          .attr('clip-path', 'url(#chart-clip)');
+
+        // Balance (bottom third)
+        const balanceData: Array<[number, number]> = downsampledIndices.map(i =>
+          [xScale(times[i]), balanceScale(frontPercent[i])]
+        );
+
+        g.append('path')
+          .datum(balanceData)
+          .attr('fill', 'none')
+          .attr('stroke', '#4ade80')
+          .attr('stroke-width', 2.5)
+          .attr('d', lineGenerator)
+          .attr('clip-path', 'url(#chart-clip)');
+
+        // Legend — horizontal row just below the x-axis, above "Time (s)"
+        const legendY = plotHeight + 30;
+        const legend = g.append('g').attr('transform', `translate(0, ${legendY})`);
 
         const legendItems = [
-          { name: 'Total DF', color: '#3b82f6', dashed: false, unit: 'N', dataKey: 'totalDownforce' },
-          { name: 'Speed', color: '#ff00ff', dashed: false, unit: 'mph', dataKey: 'speed' },
-          { name: 'Front Balance', color: '#4ade80', dashed: false, unit: '%', dataKey: 'frontPercent' },
-        ];
+          { name: 'Speed', color: '#ff00ff', unit: 'mph', dataKey: 'speed' },
+          { name: 'Total DF', color: '#3b82f6', unit: 'N', dataKey: 'totalDownforce' },
+          { name: 'Front Balance', color: '#4ade80', unit: '%', dataKey: 'frontPercent' },
+          { label: 'Steady-state', fill: '#222', isBox: true },
+          { label: 'Transient', fill: '#ff0000', fillOpacity: 0.35, isBox: true },
+        ] as Array<any>;
 
-        legendItems.forEach((item, i) => {
-          const legendRow = legend.append('g')
-            .attr('transform', `translate(0, ${i * 20})`);
+        // Measure each item width to center the whole row
+        const itemWidths = legendItems.map((item: any) => {
+          if (item.isBox) return item.label.length * 6 + 30;
+          const text = `${item.name}: ${cursorData?.[item.dataKey] !== undefined ? cursorData[item.dataKey].toFixed(2) : '--'} ${item.unit}`;
+          return text.length * 6 + 30;
+        });
+        const gap = 20;
+        const totalW = itemWidths.reduce((a: number, b: number) => a + b, 0) + gap * (legendItems.length - 1);
+        let curX = (plotWidth - totalW) / 2;
 
-          const value = cursorData && cursorData[item.dataKey] !== undefined
-            ? cursorData[item.dataKey].toFixed(2)
-            : '--';
+        legendItems.forEach((item: any) => {
+          const iw = itemWidths[legendItems.indexOf(item)];
+          const row = legend.append('g').attr('transform', `translate(${curX}, 0)`);
 
-          const labelText = `${item.name}: ${value} ${item.unit}`;
-          const boxWidth = Math.max(140, labelText.length * 5.5);
+          if (item.isBox) {
+            row.append('rect')
+              .attr('x', 0).attr('y', 2).attr('width', 18).attr('height', 12)
+              .attr('fill', item.fill)
+              .attr('opacity', item.fillOpacity ?? 1)
+              .attr('stroke', '#666').attr('stroke-width', 0.5);
+            row.append('text')
+              .attr('x', 22).attr('y', 12)
+              .attr('fill', '#ccc').attr('font-size', '11px')
+              .text(item.label);
+          } else {
+            const value = cursorData?.[item.dataKey] !== undefined
+              ? cursorData[item.dataKey].toFixed(2) : '--';
+            row.append('line')
+              .attr('x1', 0).attr('x2', 18).attr('y1', 8).attr('y2', 8)
+              .attr('stroke', item.color).attr('stroke-width', 2.5);
+            row.append('text')
+              .attr('x', 22).attr('y', 12)
+              .attr('fill', '#ccc').attr('font-size', '11px')
+              .text(`${item.name}: ${value} ${item.unit}`);
+          }
 
-          legendRow.append('rect')
-            .attr('x', 0)
-            .attr('y', 0)
-            .attr('width', boxWidth)
-            .attr('height', 16)
-            .attr('fill', '#000')
-            .attr('opacity', 0.6);
-
-          legendRow.append('line')
-            .attr('x1', 5)
-            .attr('x2', 25)
-            .attr('y1', 8)
-            .attr('y2', 8)
-            .attr('stroke', item.color)
-            .attr('stroke-width', 2.5)
-            .attr('stroke-dasharray', item.dashed ? '4,4' : 'none');
-
-          legendRow.append('text')
-            .attr('x', 30)
-            .attr('y', 12)
-            .attr('fill', '#ccc')
-            .attr('font-size', '10px')
-            .text(labelText);
+          curX += iw + gap;
         });
 
         if (cursorTime !== null && cursorTime >= viewStart && cursorTime <= viewEnd) {
@@ -577,7 +621,7 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
     const svgElement = svgRef.current;
     if (!svgElement) return;
 
-    const margin = { top: 50, right: 120, bottom: 70, left: 90 };
+    const margin = { top: 50, right: 30, bottom: 75, left: 80 };
     const xWithin = clientX - rect.left - margin.left;
 
     const parentWidth = svgElement.parentElement?.clientWidth || 800;
@@ -614,7 +658,7 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
       if (e.button !== 0) return;
 
       const rect = container.getBoundingClientRect();
-      const margin = { top: 50, right: 120, bottom: 70, left: 90 };
+      const margin = { top: 50, right: 30, bottom: 75, left: 80 };
       const xWithin = e.clientX - rect.left - margin.left;
 
       const svgElement = svgRef.current;

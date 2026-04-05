@@ -28,6 +28,7 @@ export interface TransferProgress {
 }
 
 export interface ConflictInfo {
+  status: string;
   has_conflict: boolean;
   uploaded_by: string;
   uploaded_at: string;

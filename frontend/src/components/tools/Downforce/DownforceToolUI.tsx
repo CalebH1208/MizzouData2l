@@ -318,6 +318,7 @@ const DownforceToolUI: React.FC<DownforceToolUIProps> = ({ fragment }) => {
     <div style={{
       display: 'flex',
       height: '100%',
+      minHeight: 0,
       margin: '8px',
       gap: '8px',
     }}>
@@ -379,6 +380,7 @@ const DownforceToolUI: React.FC<DownforceToolUIProps> = ({ fragment }) => {
         flexDirection: 'column',
         gap: '8px',
         minWidth: 0,
+        minHeight: 0,
       }}>
         {error && (
           <div style={{
@@ -418,6 +420,8 @@ const DownforceToolUI: React.FC<DownforceToolUIProps> = ({ fragment }) => {
 
       <div style={{
         width: '200px',
+        boxSizing: 'border-box',
+        minHeight: 0,
         backgroundColor: '#1a1a1a',
         borderRadius: '4px',
         border: '1px solid #333',

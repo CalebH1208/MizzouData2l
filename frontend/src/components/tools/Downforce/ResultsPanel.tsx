@@ -9,15 +9,9 @@ interface ResultsPanelProps {
 const ResultsPanel: React.FC<ResultsPanelProps> = ({ result }) => {
   return (
     <div style={{
-      width: '200px',
-      backgroundColor: '#1a1a1a',
-      borderRadius: '4px',
-      border: '1px solid #333',
-      padding: '8px',
       display: 'flex',
       flexDirection: 'column',
       gap: '8px',
-      overflowY: 'auto',
     }}>
       <h4 style={{ margin: '0', color: '#F1B82D', fontSize: '13px', borderBottom: '1px solid #333', paddingBottom: '6px' }}>
         Results

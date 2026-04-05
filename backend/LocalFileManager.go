@@ -129,6 +129,15 @@ func (l *Local_file_manager) LocalFileExists(path string) (bool, error) {
 	return err == nil, err
 }
 
+// JoinLocalPath constructs a safe absolute path within DATACACHE from a directory and filename.
+func (l *Local_file_manager) JoinLocalPath(dir, name string) (string, error) {
+	cacheDir, err := l.GetDataCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return safeJoin(cacheDir, filepath.Join(dir, name))
+}
+
 // DeleteLocalFile deletes a file or empty directory.
 func (l *Local_file_manager) DeleteLocalFile(path string) error {
 	cacheDir, err := l.GetDataCacheDir()

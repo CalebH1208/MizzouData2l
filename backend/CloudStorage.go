@@ -50,7 +50,9 @@ type TransferProgress struct {
 }
 
 // ConflictInfo is returned when a cloud file is newer than the local downloaded version.
+// Status: "none" (no conflict), "cloud-newer" (only cloud changed), "conflict" (both changed).
 type ConflictInfo struct {
+	Status      string `json:"status"`
 	HasConflict bool   `json:"has_conflict"`
 	UploadedBy  string `json:"uploaded_by"`
 	UploadedAt  string `json:"uploaded_at"`
@@ -200,15 +202,6 @@ func (cs *Cloud_storage) ListFiles(prefix string) ([]CloudFileInfo, error) {
 				info.UploadedAt = obj.LastModified.UTC().Format(time.RFC3339)
 			}
 
-			// Fetch metadata for uploader name (HeadObject — cached by SDK)
-			meta, err := cs.s3Client.HeadObject(context.Background(), &s3.HeadObjectInput{
-				Bucket: aws.String(cs.config.BucketName),
-				Key:    aws.String(key),
-			})
-			if err == nil {
-				info.UploadedBy = meta.Metadata["uploaded-by"]
-			}
-
 			result = append(result, info)
 		}
 	}
@@ -255,31 +248,102 @@ func (cs *Cloud_storage) GetCloudFileMeta(key string) (CloudFileInfo, error) {
 }
 
 // CheckConflict returns whether the cloud version is newer than what was last downloaded locally.
+// Status is "none", "cloud-newer" (only cloud changed), or "conflict" (both local and cloud changed).
 func (cs *Cloud_storage) CheckConflict(cloudKey, localPath string) (ConflictInfo, error) {
 	record := cs.syncState.GetDownloadRecord(localPath)
 	if record.CloudKey == "" {
-		return ConflictInfo{HasConflict: false}, nil
+		return ConflictInfo{Status: "none"}, nil
 	}
 
 	meta, err := cs.GetCloudFileMeta(cloudKey)
 	if err != nil {
-		return ConflictInfo{HasConflict: false}, nil // cloud file may not exist yet
+		return ConflictInfo{Status: "none"}, nil
 	}
 
 	uploadedAt, err1 := time.Parse(time.RFC3339, meta.UploadedAt)
 	downloadedAt, err2 := time.Parse(time.RFC3339, record.DownloadedAt)
-	if err1 == nil && err2 == nil && uploadedAt.After(downloadedAt) {
-		return ConflictInfo{
-			HasConflict: true,
-			UploadedBy:  meta.UploadedBy,
-			UploadedAt:  meta.UploadedAt,
-		}, nil
+	if err1 != nil || err2 != nil || !uploadedAt.After(downloadedAt) {
+		return ConflictInfo{Status: "none"}, nil
 	}
-	return ConflictInfo{HasConflict: false}, nil
+
+	// Cloud is newer. Check if local file was also modified since download.
+	status := "cloud-newer"
+	localStat, statErr := os.Stat(localPath)
+	if statErr == nil && localStat.ModTime().After(downloadedAt) {
+		status = "conflict"
+	}
+
+	return ConflictInfo{
+		Status:      status,
+		HasConflict: true,
+		UploadedBy:  meta.UploadedBy,
+		UploadedAt:  meta.UploadedAt,
+	}, nil
 }
 
-// UploadFile uploads a local file to the given S3 key, emitting progress events.
+// UploadFile starts an async upload of a local file to the given S3 key.
+// Returns immediately; progress/completion/error emitted via events (matching DownloadFile pattern).
 func (cs *Cloud_storage) UploadFile(localPath, cloudKey string) error {
+	if !cs.IsConfigured() {
+		return fmt.Errorf("cloud storage not configured")
+	}
+	if cs.ctx == nil {
+		return fmt.Errorf("app context not ready")
+	}
+
+	f, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to open file: %w", err)
+	}
+
+	stat, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return fmt.Errorf("failed to stat file: %w", err)
+	}
+	totalBytes := stat.Size()
+	filename := filepath.Base(localPath)
+
+	uploadMeta := cs.buildUploadMeta(localPath)
+
+	listener := &uploadProgressListener{
+		ctx:        cs.ctx,
+		filename:   filename,
+		totalBytes: totalBytes,
+	}
+
+	go func() {
+		defer f.Close()
+		_, err := cs.tmClient.UploadObject(context.Background(),
+			&transfermanager.UploadObjectInput{
+				Bucket:   aws.String(cs.config.BucketName),
+				Key:      aws.String(cloudKey),
+				Body:     f,
+				Metadata: uploadMeta,
+			},
+			func(o *transfermanager.Options) {
+				o.ObjectProgressListeners.Register(listener)
+			},
+		)
+		if err != nil {
+			runtime.EventsEmit(cs.ctx, "transfer:error", map[string]string{
+				"filename":  filename,
+				"direction": "upload",
+				"error":     err.Error(),
+			})
+			return
+		}
+		runtime.EventsEmit(cs.ctx, "transfer:complete", map[string]string{
+			"filename":  filename,
+			"direction": "upload",
+			"cloud_key": cloudKey,
+		})
+	}()
+	return nil
+}
+
+// uploadFileSync performs a blocking upload (used by SyncFile which needs to update records after completion).
+func (cs *Cloud_storage) uploadFileSync(localPath, cloudKey string) error {
 	if !cs.IsConfigured() {
 		return fmt.Errorf("cloud storage not configured")
 	}
@@ -294,24 +358,13 @@ func (cs *Cloud_storage) UploadFile(localPath, cloudKey string) error {
 	if err != nil {
 		return fmt.Errorf("failed to stat file: %w", err)
 	}
-	totalBytes := stat.Size()
 	filename := filepath.Base(localPath)
+	uploadMeta := cs.buildUploadMeta(localPath)
 
 	listener := &uploadProgressListener{
 		ctx:        cs.ctx,
 		filename:   filename,
-		totalBytes: totalBytes,
-	}
-
-	// Build metadata including structured tags from the file
-	uploadMeta := map[string]string{
-		"uploaded-by": cs.config.DisplayName,
-	}
-	if strings.HasSuffix(strings.ToUpper(localPath), ".MRTF") {
-		tags, _, _ := ReadTagsOnly(localPath)
-		for k, v := range tags.Categories {
-			uploadMeta["tag-"+strings.ToLower(k)] = v
-		}
+		totalBytes: stat.Size(),
 	}
 
 	_, err = cs.tmClient.UploadObject(context.Background(),
@@ -329,6 +382,19 @@ func (cs *Cloud_storage) UploadFile(localPath, cloudKey string) error {
 		return fmt.Errorf("upload failed: %w", err)
 	}
 	return nil
+}
+
+func (cs *Cloud_storage) buildUploadMeta(localPath string) map[string]string {
+	meta := map[string]string{
+		"uploaded-by": cs.config.DisplayName,
+	}
+	if strings.HasSuffix(strings.ToUpper(localPath), ".MRTF") {
+		tags, _, _ := ReadTagsOnly(localPath)
+		for k, v := range tags.Categories {
+			meta["tag-"+strings.ToLower(k)] = v
+		}
+	}
+	return meta
 }
 
 // DownloadFile starts an async download of an S3 object to a local path.
@@ -406,6 +472,40 @@ func (cs *Cloud_storage) DeleteCloudFile(key string) error {
 	return err
 }
 
+// DeleteCloudFolder deletes an empty virtual folder. Returns an error if the folder has children.
+func (cs *Cloud_storage) DeleteCloudFolder(prefix string) error {
+	if !cs.IsConfigured() {
+		return fmt.Errorf("cloud storage not configured")
+	}
+	if !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	// Check if folder has any children (other than its own placeholder)
+	out, err := cs.s3Client.ListObjectsV2(context.Background(), &s3.ListObjectsV2Input{
+		Bucket:  aws.String(cs.config.BucketName),
+		Prefix:  aws.String(prefix),
+		MaxKeys: aws.Int32(2),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to check folder contents: %w", err)
+	}
+	childCount := 0
+	for _, obj := range out.Contents {
+		if aws.ToString(obj.Key) != prefix {
+			childCount++
+		}
+	}
+	if childCount > 0 || len(out.CommonPrefixes) > 0 {
+		return fmt.Errorf("folder is not empty")
+	}
+	// Delete the placeholder object
+	_, err = cs.s3Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+		Bucket: aws.String(cs.config.BucketName),
+		Key:    aws.String(prefix),
+	})
+	return err
+}
+
 // CreateCloudFolder creates a virtual folder by putting a zero-byte placeholder object.
 func (cs *Cloud_storage) CreateCloudFolder(prefix string) error {
 	if !cs.IsConfigured() {
@@ -453,7 +553,7 @@ func (cs *Cloud_storage) MoveToDeleted(key string) error {
 
 // SyncFile uploads a local file back to its original cloud key and updates the sync record.
 func (cs *Cloud_storage) SyncFile(localPath, cloudKey string) error {
-	if err := cs.UploadFile(localPath, cloudKey); err != nil {
+	if err := cs.uploadFileSync(localPath, cloudKey); err != nil {
 		return err
 	}
 	meta, err := cs.GetCloudFileMeta(cloudKey)
@@ -484,15 +584,15 @@ func (cs *Cloud_storage) RenameCloudFile(oldKey, newKey string) error {
 
 // --- Private helpers ---
 
-// defaultCloudConfig is used when no cloud_config.json file is present.
-// Replace the placeholder strings with your actual AWS credentials.
-var defaultCloudConfig = &CloudConfig{
-	AccessKeyID:     "AKIAVBBE3PEAXU2EP2CF",
-	SecretAccessKey: "4HLNog6X9AiTHr9Fi2mq4MI14m46xY+b4PsSWoj3",
-	BucketName:      "mizzou-racing-telemetry",
-	Region:          "us-east-2",
-	DisplayName:     "DEFAULT_DISPLAY_NAME",
-}
+// Build-time injected credentials via -ldflags.
+// Set by: go build -ldflags "-X MizzouDataTool/backend.defaultAccessKeyID=... -X MizzouDataTool/backend.defaultSecretAccessKey=..."
+// See build.sh / .env.build for usage.
+var (
+	defaultAccessKeyID     string // injected at build time
+	defaultSecretAccessKey string // injected at build time
+	defaultBucketName      string // injected at build time
+	defaultRegion          string // injected at build time
+)
 
 func (cs *Cloud_storage) tryLoadConfig() {
 	path, err := cloudConfigPath()
@@ -501,17 +601,29 @@ func (cs *Cloud_storage) tryLoadConfig() {
 		if err == nil {
 			var cfg CloudConfig
 			if jsonErr := json.Unmarshal(data, &cfg); jsonErr == nil {
-				// File-based config takes precedence over the default
 				_ = cs.initClient(&cfg)
 				cs.config = &cfg
 				return
 			}
 		}
 	}
-	// Fall back to the hardcoded default if no file config is present
-	if defaultCloudConfig.AccessKeyID != "YOUR_AWS_ACCESS_KEY_ID" {
-		_ = cs.initClient(defaultCloudConfig)
-		cs.config = defaultCloudConfig
+	// Fall back to build-time injected defaults (set via -ldflags)
+	if defaultAccessKeyID != "" && defaultSecretAccessKey != "" {
+		cfg := &CloudConfig{
+			AccessKeyID:     defaultAccessKeyID,
+			SecretAccessKey: defaultSecretAccessKey,
+			BucketName:      defaultBucketName,
+			Region:          defaultRegion,
+			DisplayName:     "Team Member",
+		}
+		if cfg.BucketName == "" {
+			cfg.BucketName = "mizzou-racing-telemetry"
+		}
+		if cfg.Region == "" {
+			cfg.Region = "us-east-2"
+		}
+		_ = cs.initClient(cfg)
+		cs.config = cfg
 	}
 }
 
