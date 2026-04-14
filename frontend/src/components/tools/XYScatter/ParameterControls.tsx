@@ -16,6 +16,7 @@ interface ParameterControlsProps {
   onExecute: () => void;
   onGoBackZoom: () => void;
   onBoundsConfigChange: (config: BoundsConfig) => void;
+  onSquareXY: () => void;
   onFeelingLucky: () => void;
   onExportPNG: () => void;
   hasResult: boolean;
@@ -37,6 +38,7 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
   onExecute,
   onGoBackZoom,
   onBoundsConfigChange,
+  onSquareXY,
   onFeelingLucky,
   onExportPNG,
   hasResult,
@@ -195,7 +197,7 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
           <input
             type="checkbox"
             checked={boundsConfig.enabled}
-            onChange={(e) => onBoundsConfigChange({ ...boundsConfig, enabled: e.target.checked })}
+            onChange={(e) => onBoundsConfigChange({ ...boundsConfig, enabled: e.target.checked, squared: e.target.checked ? boundsConfig.squared : false })}
             style={{
               width: '16px',
               height: '16px',
@@ -268,14 +270,16 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
               type="number"
               value={boundsConfig.xMin}
               onChange={(e) => onBoundsConfigChange({ ...boundsConfig, xMin: e.target.value })}
+              disabled={boundsConfig.squared}
               style={{
                 width: '100%',
                 padding: '4px 6px',
-                backgroundColor: '#000',
-                color: '#fff',
+                backgroundColor: boundsConfig.squared ? '#222' : '#000',
+                color: boundsConfig.squared ? '#888' : '#fff',
                 border: '1px solid #555',
                 borderRadius: '3px',
                 fontSize: '11px',
+                cursor: boundsConfig.squared ? 'not-allowed' : 'text',
               }}
               placeholder="Auto"
             />
@@ -289,14 +293,16 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
               type="number"
               value={boundsConfig.xMax}
               onChange={(e) => onBoundsConfigChange({ ...boundsConfig, xMax: e.target.value })}
+              disabled={boundsConfig.squared}
               style={{
                 width: '100%',
                 padding: '4px 6px',
-                backgroundColor: '#000',
-                color: '#fff',
+                backgroundColor: boundsConfig.squared ? '#222' : '#000',
+                color: boundsConfig.squared ? '#888' : '#fff',
                 border: '1px solid #555',
                 borderRadius: '3px',
                 fontSize: '11px',
+                cursor: boundsConfig.squared ? 'not-allowed' : 'text',
               }}
               placeholder="Auto"
             />
@@ -310,14 +316,16 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
               type="number"
               value={boundsConfig.yMin}
               onChange={(e) => onBoundsConfigChange({ ...boundsConfig, yMin: e.target.value })}
+              disabled={boundsConfig.squared}
               style={{
                 width: '100%',
                 padding: '4px 6px',
-                backgroundColor: '#000',
-                color: '#fff',
+                backgroundColor: boundsConfig.squared ? '#222' : '#000',
+                color: boundsConfig.squared ? '#888' : '#fff',
                 border: '1px solid #555',
                 borderRadius: '3px',
                 fontSize: '11px',
+                cursor: boundsConfig.squared ? 'not-allowed' : 'text',
               }}
               placeholder="Auto"
             />
@@ -331,14 +339,16 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
               type="number"
               value={boundsConfig.yMax}
               onChange={(e) => onBoundsConfigChange({ ...boundsConfig, yMax: e.target.value })}
+              disabled={boundsConfig.squared}
               style={{
                 width: '100%',
                 padding: '4px 6px',
-                backgroundColor: '#000',
-                color: '#fff',
+                backgroundColor: boundsConfig.squared ? '#222' : '#000',
+                color: boundsConfig.squared ? '#888' : '#fff',
                 border: '1px solid #555',
                 borderRadius: '3px',
                 fontSize: '11px',
+                cursor: boundsConfig.squared ? 'not-allowed' : 'text',
               }}
               placeholder="Auto"
             />
@@ -389,6 +399,29 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
               </div>
             </>
           )}
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '14px', marginLeft: '16px' }}>
+            <label style={{ fontSize: '10px', color: '#aaa', whiteSpace: 'nowrap' }}>Square XY:</label>
+            <input
+              type="checkbox"
+              checked={boundsConfig.squared}
+              disabled={!hasResult}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  onSquareXY();
+                } else {
+                  onBoundsConfigChange({ ...boundsConfig, squared: false });
+                }
+              }}
+              style={{
+                width: '16px',
+                height: '16px',
+                accentColor: '#F1B82D',
+                cursor: !hasResult ? 'not-allowed' : 'pointer',
+              }}
+              title="Force X and Y axes to the same range, centered on the data"
+            />
+          </div>
         </div>
       )}
     </div>

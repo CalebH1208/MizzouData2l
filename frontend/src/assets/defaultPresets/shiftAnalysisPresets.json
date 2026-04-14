@@ -1,0 +1,18 @@
+[
+  {
+    "name": "Preset 1/18/2026, 4:05:59 PM",
+    "rpmChannel": "RPM",
+    "gearChannel": "Gear",
+    "speedChannel": "MPH",
+    "longGChannel": "VN Accel Long",
+    "shiftRequestChannel": "shift request",
+    "pressureChannel": "",
+    "gearRatios": [
+      2.75,
+      2,
+      1.667,
+      1.444
+    ],
+    "flipLongG": false
+  }
+]

@@ -1,0 +1,237 @@
+[
+  {
+    "id": "__last_session__",
+    "name": "__Last Session__",
+    "createdAt": 1775601465168,
+    "lastUsedAt": 1775601465168,
+    "order": -1,
+    "viewportStart": 0.9442269802093506,
+    "viewportEnd": 2214.3631375122077,
+    "graphs": [
+      {
+        "title": "Graph 1",
+        "channelNames": [
+          "Gear pot position",
+          "Gear"
+        ],
+        "useSplitAxis": false,
+        "channelColors": {
+          "Gear pot position": "#19E519",
+          "Gear": "#19E5E5"
+        }
+      }
+    ]
+  },
+  {
+    "id": "preset_1768716892642_nrkjm0t6a",
+    "name": "Throttle, Speed, Brake Pressure",
+    "createdAt": 1768716892642,
+    "lastUsedAt": 1775601716179,
+    "order": 0,
+    "viewportStart": 8450.64127120943,
+    "viewportEnd": 8478.145688260638,
+    "graphs": [
+      {
+        "title": "Graph 1",
+        "channelNames": [
+          "MPH",
+          "Front brake pressure",
+          "throttle pos"
+        ],
+        "useSplitAxis": true,
+        "channelColors": {
+          "MPH": "#E519E5",
+          "Front brake pressure": "#19E519",
+          "throttle pos": "#19E5E5"
+        }
+      }
+    ]
+  },
+  {
+    "id": "preset_1768717893354_ur7lcv209",
+    "name": "Preset 1/18/2026, 12:31:32 AM",
+    "createdAt": 1768717893354,
+    "lastUsedAt": 1775010093237,
+    "order": 2,
+    "viewportStart": 8456.717260677335,
+    "viewportEnd": 8533.045031906875,
+    "graphs": [
+      {
+        "title": "Graph 1",
+        "channelNames": [
+          "oil pres"
+        ],
+        "useSplitAxis": false,
+        "channelColors": {
+          "oil pres": "#19E5E5"
+        }
+      },
+      {
+        "title": "Graph 2",
+        "channelNames": [
+          "RPM"
+        ],
+        "useSplitAxis": false,
+        "channelColors": {
+          "RPM": "#E519E5"
+        }
+      }
+    ]
+  },
+  {
+    "id": "preset_1768946615575_sorwlupm1",
+    "name": "speed gear rpm",
+    "createdAt": 1768946615575,
+    "lastUsedAt": 1775598829019,
+    "order": 3,
+    "viewportStart": 8037.647816759361,
+    "viewportEnd": 8193.209731729676,
+    "graphs": [
+      {
+        "title": "Graph 1",
+        "channelNames": [
+          "MPH",
+          "Gear",
+          "RPM"
+        ],
+        "useSplitAxis": true,
+        "channelColors": {
+          "MPH": "#E519E5",
+          "Gear": "#19E5E5",
+          "RPM": "#E51919"
+        }
+      }
+    ]
+  },
+  {
+    "id": "preset_1769117777301_t5u8n9ff3",
+    "name": "can we really drive?",
+    "createdAt": 1769117777301,
+    "lastUsedAt": 1775602543703,
+    "order": 4,
+    "viewportStart": 9093.248388345248,
+    "viewportEnd": 9153.80513648831,
+    "graphs": [
+      {
+        "title": "Graph 1",
+        "channelNames": [
+          "MPH",
+          "Gear",
+          "RPM",
+          "shift request",
+          "Throtle pedal pos"
+        ],
+        "useSplitAxis": true,
+        "channelColors": {
+          "MPH": "#E519E5",
+          "Gear": "#19E5E5",
+          "RPM": "#E51919",
+          "shift request": "#19E519",
+          "Throtle pedal pos": "#E5E519"
+        }
+      }
+    ]
+  },
+  {
+    "id": "preset_1770248696970_iuko4eyqa",
+    "name": "GPS",
+    "createdAt": 1770248696970,
+    "lastUsedAt": 1775601720173,
+    "order": 5,
+    "viewportStart": 3.5570321083068848,
+    "viewportEnd": 2413.281167268753,
+    "graphs": [
+      {
+        "title": "Graph 2",
+        "channelNames": [
+          "MPH"
+        ],
+        "useSplitAxis": false,
+        "channelColors": {
+          "MPH": "#E519E5"
+        }
+      }
+    ]
+  },
+  {
+    "id": "preset_1774645765599_rs93uipcl",
+    "name": "Design breif",
+    "createdAt": 1774645765599,
+    "lastUsedAt": 1775601722096,
+    "order": 6,
+    "viewportStart": 0.9670699834823608,
+    "viewportEnd": 478.552951464653,
+    "graphs": [
+      {
+        "title": "Graph 1",
+        "channelNames": [
+          "throttle pos",
+          "RPM"
+        ],
+        "useSplitAxis": true,
+        "channelColors": {
+          "throttle pos": "#19E5E5",
+          "RPM": "#E519E5"
+        }
+      },
+      {
+        "title": "Graph 2",
+        "channelNames": [
+          "Oil Temp",
+          "Water temp"
+        ],
+        "useSplitAxis": false,
+        "channelColors": {
+          "Oil Temp": "#19E519",
+          "Water temp": "#E51919"
+        }
+      }
+    ]
+  },
+  {
+    "id": "preset_1774816630067_x86t3qydo",
+    "name": "SWAG N YAW sheeeeeeeet",
+    "createdAt": 1774816630067,
+    "lastUsedAt": 1775601720955,
+    "order": 7,
+    "viewportStart": 824.7493652793881,
+    "viewportEnd": 928.7238272841051,
+    "graphs": [
+      {
+        "title": "Graph 1",
+        "channelNames": [
+          "VN yaw rate",
+          "SWAG"
+        ],
+        "useSplitAxis": true,
+        "channelColors": {
+          "VN yaw rate": "#19E519",
+          "SWAG": "#E5E519"
+        }
+      }
+    ]
+  },
+  {
+    "id": "preset_1774919348079_3o2srghv5",
+    "name": "fuck ryan",
+    "createdAt": 1774919348079,
+    "lastUsedAt": 1775601721291,
+    "order": 8,
+    "viewportStart": 0.9548799991607666,
+    "viewportEnd": 867.1058959960938,
+    "graphs": [
+      {
+        "title": "Graph 1",
+        "channelNames": [
+          "VN Accel Lat",
+          "VN Accel Long"
+        ],
+        "useSplitAxis": false,
+        "channelColors": {
+          "VN Accel Lat": "#E519E5",
+          "VN Accel Long": "#E5E519"
+        }
+      }
+    ]
+  }
+]

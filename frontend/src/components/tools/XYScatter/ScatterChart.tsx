@@ -27,7 +27,7 @@ export const ScatterChart = forwardRef<SVGSVGElement, ScatterChartProps>(({
     if (result && result.data) {
       renderScatterPlot();
     }
-  }, [result, zoomStack, boundsConfig.enabled]);
+  }, [result, zoomStack, boundsConfig]);
 
   useEffect(() => {
     const handleResize = () => {

@@ -49,6 +49,7 @@ const DataEntryPage: React.FC = () => {
   const [showPresetSelector, setShowPresetSelector] = useState(false);
   const [allPresets, setAllPresets] = useState<Backend.Channel_preset[]>([]);
   const [presetsApplied, setPresetsApplied] = useState<Set<string>>(new Set());
+  const [skippedChannels, setSkippedChannels] = useState<Set<string>>(new Set());
 
   // Load channel data when component mounts or after successful data loading
   const loadChannelData = async () => {
@@ -239,21 +240,36 @@ const DataEntryPage: React.FC = () => {
         setShowPopup(true);
       }
 
+      const newSkipped = new Set(skippedChannels);
+      if (!isValidated) {
+        newSkipped.add(selectedChannel);
+      }
+      setSkippedChannels(newSkipped);
+
       await updateChannelData();
       const unvalidatedNames = await GetAllChannelUnvalidatedNames();
 
-      if (unvalidatedNames.length === 0) {
-        setPopupMessage("You've reviewed all channels! Starting round two - you can now re-validate any channels you want to adjust.");
-        setPopupBg("#F1B82D");
-        setShowPopup(true);
-        const allNames = await GetAllChannelNames();
-        const nextChannel = allNames.length > 0 ? allNames[0] : "Time";
-        await handleChannelSelect(nextChannel);
+      const nextUnskipped = unvalidatedNames.find(name => !newSkipped.has(name));
+
+      if (!nextUnskipped) {
+        if (unvalidatedNames.length > 0) {
+          setPopupMessage("All remaining channels have been skipped. You can select any channel from the list to revisit.");
+          setPopupBg("#F1B82D");
+          setShowPopup(true);
+          setSkippedChannels(new Set());
+        } else {
+          setPopupMessage("You've reviewed all channels! Starting round two - you can now re-validate any channels you want to adjust.");
+          setPopupBg("#F1B82D");
+          setShowPopup(true);
+          setSkippedChannels(new Set());
+          const allNames = await GetAllChannelNames();
+          const nextChannel = allNames.length > 0 ? allNames[0] : "Time";
+          await handleChannelSelect(nextChannel);
+        }
         return;
       }
 
-      const nextChannel = unvalidatedNames[0];
-      await handleChannelSelect(nextChannel);
+      await handleChannelSelect(nextUnskipped);
     } catch (err) {
       LogPrint("Error skipping/unvalidating channel: " + err);
       setPopupMessage("Error skipping/unvalidating channel");
@@ -290,10 +306,20 @@ const DataEntryPage: React.FC = () => {
       setPopupBg("#2f773aff");
       setShowPopup(true);
 
-      
+      setSkippedChannels(prev => {
+        const next = new Set(prev);
+        next.delete(selectedChannel);
+        return next;
+      });
+
       await updateChannelData();
       const unvalidatedNames = await GetAllChannelUnvalidatedNames();
-      const nextChannel = unvalidatedNames.length > 0 ? unvalidatedNames[0] : "Time";
+      const nextUnskipped = unvalidatedNames.find(name => !skippedChannels.has(name));
+      const nextChannel = nextUnskipped ?? (unvalidatedNames.length > 0 ? unvalidatedNames[0] : "Time");
+
+      if (!nextUnskipped && unvalidatedNames.length > 0) {
+        setSkippedChannels(new Set());
+      }
 
       setSelectedChannel(nextChannel);
       const conv = await GetConversion(nextChannel);
@@ -1182,7 +1208,7 @@ const DataEntryPage: React.FC = () => {
               position: 'relative'
             }}>
               {selectedChannel ? (
-                <TuneGraph key={graphKey} disableContextMenu={true} disableDragSelect={true} />
+                <TuneGraph key={graphKey} disableContextMenu={true} disableDragSelect={true} disableNotes={true} />
               ) : (
                 <div style={{
                   display: 'flex',

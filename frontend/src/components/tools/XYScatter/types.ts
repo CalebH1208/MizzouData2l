@@ -32,4 +32,5 @@ export interface BoundsConfig {
   colorMin: string;
   colorMax: string;
   enabled: boolean;
+  squared: boolean;
 }

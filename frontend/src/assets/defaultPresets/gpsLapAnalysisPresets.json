@@ -1,0 +1,17 @@
+[
+  {
+    "name": "1",
+    "latChannel": "lattitude",
+    "lonChannel": "longitude",
+    "speedChannel": "MPH",
+    "latAccelChannel": "Lat Accel",
+    "longAccelChannel": "Long Accel",
+    "brakeChannel": "Brake Pressure Rear",
+    "throttleChannel": "Throttle Position",
+    "startLine": null,
+    "finishLine": null,
+    "enableAutoSectoring": false,
+    "curvatureThreshold": 0.1,
+    "minStraightLength": 50
+  }
+]

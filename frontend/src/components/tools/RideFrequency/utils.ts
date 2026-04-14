@@ -1,5 +1,6 @@
 import { RideFrequencyPreset } from './types';
 import { SaveFileDialog, WriteFile } from '../../../../wailsjs/go/main/App';
+import { seedPresetsIfNeeded } from '../../../utils/seedPresets';
 
 export const CHANNEL_COLORS = [
   '#ff00ff',
@@ -13,6 +14,7 @@ export const CHANNEL_COLORS = [
 ];
 
 export const loadPresets = (): RideFrequencyPreset[] => {
+  seedPresetsIfNeeded('rideFrequencyToolPresets');
   const saved = localStorage.getItem('rideFrequencyToolPresets');
   if (saved) {
     try {

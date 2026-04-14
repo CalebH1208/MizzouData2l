@@ -1,7 +1,9 @@
 import { PowertrainPreset } from './types';
 import { SaveFileDialog, WriteFile } from '../../../../wailsjs/go/main/App';
+import { seedPresetsIfNeeded } from '../../../utils/seedPresets';
 
 export const loadPresets = (): PowertrainPreset[] => {
+  seedPresetsIfNeeded('powertrainToolPresets');
   const saved = localStorage.getItem('powertrainToolPresets');
   if (saved) {
     try {

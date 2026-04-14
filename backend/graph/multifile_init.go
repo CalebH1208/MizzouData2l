@@ -3,6 +3,7 @@ package graph
 import (
 	"fmt"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 
 	Backend "MizzouDataTool/backend"
@@ -34,20 +35,21 @@ func (fg *Full_graph) initializeFromMultipleFilesInternal(filePaths []string) ([
 	fmt.Printf("[InitializeFromMultipleFiles] Loading %d files...\n", len(filePaths))
 
 	fmt.Printf("[InitializeFromMultipleFiles] Clearing graph state...\n")
-	fg.Graphs = make([]Solo_graph, 0)
-	fg.BreakLines = make([]float64, 0)
-	fg.ExportStartLines = make([]float64, 0)
-	fg.ExportEndLines = make([]float64, 0)
+	fg.Graphs = nil
+	fg.BreakLines = nil
+	fg.ExportStartLines = nil
+	fg.ExportEndLines = nil
 	fg.CursorPos = 0
-	fg.ViewableChannels = make(map[string]*Data_channel)
-	fg.FullTimeStamps = make([]float64, 0)
+	fg.ViewableChannels = nil
+	fg.FullTimeStamps = nil
 	fg.IsMultiFile = false
-	fg.FileMetadata = make([]types.File_metadata, 0)
-	fg.FileBoundaries = make([]float64, 0)
-	fg.Notes = make([]types.Note_entry, 0)
-	fg.ChangeLog = make([]types.Change_op, 0)
-	fg.RedoStack = make([]types.Change_op, 0)
-	fg.DeletedSegments = make([]types.Deleted_segment, 0)
+	fg.FileMetadata = nil
+	fg.FileBoundaries = nil
+	fg.Notes = nil
+	fg.ChangeLog = nil
+	fg.RedoStack = nil
+	fg.DeletedSegments = nil
+	debug.FreeOSMemory()
 	fg.TimeMutations = make([]types.TimeMutation, 0)
 	fg.HasUnsavedChanges = false
 	fmt.Printf("[InitializeFromMultipleFiles] Graph state cleared\n")

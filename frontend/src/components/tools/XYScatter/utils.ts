@@ -1,5 +1,6 @@
 import { GraphPreset } from './types';
 import { SaveFileDialog, WriteFile } from '../../../../wailsjs/go/main/App';
+import { seedPresetsIfNeeded } from '../../../utils/seedPresets';
 
 export const generatePresetName = (x: string, y: string, color: string): string => {
   if (color) {
@@ -9,6 +10,7 @@ export const generatePresetName = (x: string, y: string, color: string): string 
 };
 
 export const loadPresets = (): GraphPreset[] => {
+  seedPresetsIfNeeded('scatterPlotPresets');
   const saved = localStorage.getItem('scatterPlotPresets');
   if (saved) {
     try {

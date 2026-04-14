@@ -89,6 +89,7 @@ const LapReplayPanel: React.FC<LapReplayPanelProps> = ({
   return (
     <div style={{
       flex: 1,
+      minHeight: 0,
       backgroundColor: '#1a1a1a',
       borderRadius: '4px',
       border: '1px solid #333',
@@ -96,23 +97,26 @@ const LapReplayPanel: React.FC<LapReplayPanelProps> = ({
       display: 'flex',
       flexDirection: 'column',
       gap: '12px',
+      overflow: 'hidden',
     }}>
-      <div style={{ display: 'flex', gap: '12px', height: '100%' }}>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      <div style={{ display: 'flex', gap: '12px', flex: 1, minHeight: 0 }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px', minHeight: 0, minWidth: 0 }}>
           <div style={{ fontSize: '12px', color: '#F1B82D', fontWeight: 'bold' }}>
             Lap Replay - {replayTimeIndex.toFixed(3)}s
           </div>
 
-          <GPSMap
-            laps={laps}
-            boundingBox={boundingBox}
-            mode="lap-replay"
-            lapColors={lapColors}
-            replayTimeIndex={replayTimeIndex}
-            selectedReplayLaps={selectedReplayLaps}
-            lapCustomizations={lapCustomizations}
-            height="100%"
-          />
+          <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+            <GPSMap
+              laps={laps}
+              boundingBox={boundingBox}
+              mode="lap-replay"
+              lapColors={lapColors}
+              replayTimeIndex={replayTimeIndex}
+              selectedReplayLaps={selectedReplayLaps}
+              lapCustomizations={lapCustomizations}
+              height="100%"
+            />
+          </div>
 
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <button

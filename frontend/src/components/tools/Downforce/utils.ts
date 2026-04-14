@@ -1,7 +1,9 @@
 import { DownforcePreset } from './types';
 import { SaveFileDialog, WriteFile } from '../../../../wailsjs/go/main/App';
+import { seedPresetsIfNeeded } from '../../../utils/seedPresets';
 
 export const loadPresets = (): DownforcePreset[] => {
+  seedPresetsIfNeeded('downforceToolPresets');
   const saved = localStorage.getItem('downforceToolPresets');
   if (saved) {
     try {

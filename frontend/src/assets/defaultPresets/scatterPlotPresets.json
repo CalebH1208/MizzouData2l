@@ -1,0 +1,56 @@
+[
+  {
+    "name": "Time vs MPH by Gear",
+    "xChannel": "Time",
+    "yChannel": "MPH",
+    "colorChannel": "Gear"
+  },
+  {
+    "name": "Oil Temp vs Water temp by RPM",
+    "xChannel": "Oil Temp",
+    "yChannel": "Water temp",
+    "colorChannel": "RPM"
+  },
+  {
+    "name": "RPM vs MPH by Gear",
+    "xChannel": "RPM",
+    "yChannel": "MPH",
+    "colorChannel": "Gear"
+  },
+  {
+    "name": "Throtle pedal pos vs throttle pos by MAP pres",
+    "xChannel": "Throtle pedal pos",
+    "yChannel": "throttle pos",
+    "colorChannel": "MAP pres"
+  },
+  {
+    "name": "MAP pres vs Throtle pedal pos by RPM",
+    "xChannel": "MAP pres",
+    "yChannel": "Throtle pedal pos",
+    "colorChannel": "RPM"
+  },
+  {
+    "name": "lattitude vs longitude by MPH",
+    "xChannel": "lattitude",
+    "yChannel": "longitude",
+    "colorChannel": "MPH"
+  },
+  {
+    "name": "VN Accel Lat vs VN Accel Long by SWAG",
+    "xChannel": "VN Accel Lat",
+    "yChannel": "VN Accel Long",
+    "colorChannel": "SWAG"
+  },
+  {
+    "name": "Rear brake pressure vs VN Accel Long",
+    "xChannel": "Rear brake pressure",
+    "yChannel": "VN Accel Long",
+    "colorChannel": ""
+  },
+  {
+    "name": "VN Accel Lat vs VN Accel Long",
+    "xChannel": "VN Accel Lat",
+    "yChannel": "VN Accel Long",
+    "colorChannel": ""
+  }
+]

@@ -66,19 +66,28 @@ const GPSMap: React.FC<GPSMapProps> = ({
       minLon = boundingBox.minLon;
       maxLon = boundingBox.maxLon;
     } else if (gpsTrace.length > 0) {
-      const latitudes = gpsTrace.map(p => p[0]);
-      const longitudes = gpsTrace.map(p => p[1]);
-      minLat = Math.min(...latitudes);
-      maxLat = Math.max(...latitudes);
-      minLon = Math.min(...longitudes);
-      maxLon = Math.max(...longitudes);
+      minLat = gpsTrace[0][0];
+      maxLat = gpsTrace[0][0];
+      minLon = gpsTrace[0][1];
+      maxLon = gpsTrace[0][1];
+      for (let i = 1; i < gpsTrace.length; i++) {
+        const lat = gpsTrace[i][0];
+        const lon = gpsTrace[i][1];
+        if (lat < minLat) minLat = lat;
+        else if (lat > maxLat) maxLat = lat;
+        if (lon < minLon) minLon = lon;
+        else if (lon > maxLon) maxLon = lon;
+      }
     } else {
       return;
     }
 
-    const padding = 80;
-    const mapWidth = rect.width - 2 * padding;
-    const mapHeight = rect.height - 2 * padding;
+    const padLeft = 50;
+    const padRight = 12;
+    const padTop = 12;
+    const padBottom = 38;
+    const availWidth = rect.width - padLeft - padRight;
+    const availHeight = rect.height - padTop - padBottom;
 
     const latRange = maxLat - minLat;
     const lonRange = maxLon - minLon;
@@ -88,22 +97,35 @@ const GPSMap: React.FC<GPSMapProps> = ({
     const totalWidthMeters = haversineDistance(minLat, minLon, minLat, maxLon);
     const totalHeightMeters = haversineDistance(minLat, minLon, maxLat, minLon);
 
-    const xTickInterval = getTickInterval(totalWidthMeters);
-    const yTickInterval = getTickInterval(totalHeightMeters);
+    const xTickInterval = getTickInterval(Math.max(totalWidthMeters, totalHeightMeters));
+    const yTickInterval = xTickInterval;
 
-    const xAxisMin = -xTickInterval / 2;
-    const xAxisMax = totalWidthMeters + xTickInterval / 2;
-    const yAxisMin = -yTickInterval / 2;
-    const yAxisMax = totalHeightMeters + yTickInterval / 2;
-    const xAxisRange = xAxisMax - xAxisMin;
-    const yAxisRange = yAxisMax - yAxisMin;
+    const rawXMin = -xTickInterval / 2;
+    const rawXMax = totalWidthMeters + xTickInterval / 2;
+    const rawYMin = -yTickInterval / 2;
+    const rawYMax = totalHeightMeters + yTickInterval / 2;
+    const rawXRange = rawXMax - rawXMin;
+    const rawYRange = rawYMax - rawYMin;
+
+    const metersPerPixel = Math.max(rawXRange / availWidth, rawYRange / availHeight);
+    const mapWidth = rawXRange / metersPerPixel;
+    const mapHeight = rawYRange / metersPerPixel;
+    const xOffset = padLeft + (availWidth - mapWidth) / 2;
+    const yOffset = padBottom + (availHeight - mapHeight) / 2;
+
+    const xAxisMin = rawXMin;
+    const xAxisMax = rawXMax;
+    const yAxisMin = rawYMin;
+    const yAxisMax = rawYMax;
+    const xAxisRange = rawXRange;
+    const yAxisRange = rawYRange;
 
     const distanceToCanvasX = (dist: number): number => {
-      return padding + ((dist - xAxisMin) / xAxisRange) * mapWidth;
+      return xOffset + ((dist - xAxisMin) / xAxisRange) * mapWidth;
     };
 
     const distanceToCanvasY = (dist: number): number => {
-      return rect.height - padding - ((dist - yAxisMin) / yAxisRange) * mapHeight;
+      return rect.height - yOffset - ((dist - yAxisMin) / yAxisRange) * mapHeight;
     };
 
     const latLonToCanvas = (lat: number, lon: number): [number, number] => {
@@ -281,37 +303,42 @@ const GPSMap: React.FC<GPSMapProps> = ({
       ctx.fillText('FINISH', x1 + 10, y1 - 5);
     }
 
+    const plotLeft = xOffset;
+    const plotRight = xOffset + mapWidth;
+    const plotTop = rect.height - yOffset - mapHeight;
+    const plotBottom = rect.height - yOffset;
+
     ctx.strokeStyle = '#333';
     ctx.lineWidth = 0.5;
 
     const xTickStart = Math.ceil(xAxisMin / xTickInterval) * xTickInterval;
     for (let dist = xTickStart; dist <= xAxisMax; dist += xTickInterval) {
-      const x = padding + ((dist - xAxisMin) / xAxisRange) * mapWidth;
+      const x = distanceToCanvasX(dist);
       ctx.beginPath();
-      ctx.moveTo(x, padding);
-      ctx.lineTo(x, rect.height - padding);
+      ctx.moveTo(x, plotTop);
+      ctx.lineTo(x, plotBottom);
       ctx.stroke();
     }
 
     const yTickStart = Math.ceil(yAxisMin / yTickInterval) * yTickInterval;
     for (let dist = yTickStart; dist <= yAxisMax; dist += yTickInterval) {
-      const y = rect.height - padding - ((dist - yAxisMin) / yAxisRange) * mapHeight;
+      const y = distanceToCanvasY(dist);
       ctx.beginPath();
-      ctx.moveTo(padding, y);
-      ctx.lineTo(rect.width - padding, y);
+      ctx.moveTo(plotLeft, y);
+      ctx.lineTo(plotRight, y);
       ctx.stroke();
     }
 
     ctx.strokeStyle = '#aaa';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(padding, rect.height - padding);
-    ctx.lineTo(rect.width - padding, rect.height - padding);
+    ctx.moveTo(plotLeft, plotBottom);
+    ctx.lineTo(plotRight, plotBottom);
     ctx.stroke();
 
     ctx.beginPath();
-    ctx.moveTo(padding, padding);
-    ctx.lineTo(padding, rect.height - padding);
+    ctx.moveTo(plotLeft, plotTop);
+    ctx.lineTo(plotLeft, plotBottom);
     ctx.stroke();
 
     ctx.font = '12px Arial, sans-serif';
@@ -320,45 +347,32 @@ const GPSMap: React.FC<GPSMapProps> = ({
     ctx.textBaseline = 'top';
 
     for (let dist = xTickStart; dist <= xAxisMax; dist += xTickInterval) {
-      const x = padding + ((dist - xAxisMin) / xAxisRange) * mapWidth;
+      const x = distanceToCanvasX(dist);
       ctx.beginPath();
-      ctx.moveTo(x, rect.height - padding);
-      ctx.lineTo(x, rect.height - padding + 6);
+      ctx.moveTo(x, plotBottom);
+      ctx.lineTo(x, plotBottom + 6);
       ctx.strokeStyle = '#aaa';
       ctx.lineWidth = 1.5;
       ctx.stroke();
 
-      ctx.fillText(`${dist.toFixed(0)}`, x, rect.height - padding + 10);
+      ctx.fillText(`${dist.toFixed(0)}`, x, plotBottom + 10);
     }
 
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
 
     for (let dist = yTickStart; dist <= yAxisMax; dist += yTickInterval) {
-      const y = rect.height - padding - ((dist - yAxisMin) / yAxisRange) * mapHeight;
+      const y = distanceToCanvasY(dist);
       ctx.beginPath();
-      ctx.moveTo(padding - 6, y);
-      ctx.lineTo(padding, y);
+      ctx.moveTo(plotLeft - 6, y);
+      ctx.lineTo(plotLeft, y);
       ctx.strokeStyle = '#aaa';
       ctx.lineWidth = 1.5;
       ctx.stroke();
 
-      ctx.fillText(`${dist.toFixed(0)}`, padding - 10, y);
+      ctx.fillText(`${dist.toFixed(0)}`, plotLeft - 10, y);
     }
 
-    ctx.fillStyle = '#F1B82D';
-    ctx.font = 'bold 13px Arial, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    ctx.fillText('Distance (m)', rect.width / 2, rect.height - padding + 35);
-
-    ctx.save();
-    ctx.translate(padding - 60, rect.height / 2);
-    ctx.rotate(-Math.PI / 2);
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    ctx.fillText('Distance (m)', 0, 0);
-    ctx.restore();
   };
 
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -379,25 +393,34 @@ const GPSMap: React.FC<GPSMapProps> = ({
       minLon = boundingBox.minLon;
       maxLon = boundingBox.maxLon;
     } else if (gpsTrace.length > 0) {
-      const latitudes = gpsTrace.map(p => p[0]);
-      const longitudes = gpsTrace.map(p => p[1]);
-      minLat = Math.min(...latitudes);
-      maxLat = Math.max(...latitudes);
-      minLon = Math.min(...longitudes);
-      maxLon = Math.max(...longitudes);
+      minLat = gpsTrace[0][0];
+      maxLat = gpsTrace[0][0];
+      minLon = gpsTrace[0][1];
+      maxLon = gpsTrace[0][1];
+      for (let i = 1; i < gpsTrace.length; i++) {
+        const lat = gpsTrace[i][0];
+        const lon = gpsTrace[i][1];
+        if (lat < minLat) minLat = lat;
+        else if (lat > maxLat) maxLat = lat;
+        if (lon < minLon) minLon = lon;
+        else if (lon > maxLon) maxLon = lon;
+      }
     } else {
       return;
     }
 
-    const padding = 80;
-    const mapWidth = rect.width - 2 * padding;
-    const mapHeight = rect.height - 2 * padding;
+    const padLeft = 50;
+    const padRight = 12;
+    const padTop = 12;
+    const padBottom = 38;
+    const availWidth = rect.width - padLeft - padRight;
+    const availHeight = rect.height - padTop - padBottom;
 
     const totalWidthMeters = haversineDistance(minLat, minLon, minLat, maxLon);
     const totalHeightMeters = haversineDistance(minLat, minLon, maxLat, minLon);
 
-    const xTickInterval = getTickInterval(totalWidthMeters);
-    const yTickInterval = getTickInterval(totalHeightMeters);
+    const xTickInterval = getTickInterval(Math.max(totalWidthMeters, totalHeightMeters));
+    const yTickInterval = xTickInterval;
 
     const xAxisMin = -xTickInterval / 2;
     const xAxisMax = totalWidthMeters + xTickInterval / 2;
@@ -406,8 +429,14 @@ const GPSMap: React.FC<GPSMapProps> = ({
     const xAxisRange = xAxisMax - xAxisMin;
     const yAxisRange = yAxisMax - yAxisMin;
 
-    const distX = xAxisMin + ((canvasX - padding) / mapWidth) * xAxisRange;
-    const distY = yAxisMin + ((rect.height - canvasY - padding) / mapHeight) * yAxisRange;
+    const metersPerPixel = Math.max(xAxisRange / availWidth, yAxisRange / availHeight);
+    const mapWidth = xAxisRange / metersPerPixel;
+    const mapHeight = yAxisRange / metersPerPixel;
+    const xOffset = padLeft + (availWidth - mapWidth) / 2;
+    const yOffset = padBottom + (availHeight - mapHeight) / 2;
+
+    const distX = xAxisMin + ((canvasX - xOffset) / mapWidth) * xAxisRange;
+    const distY = yAxisMin + ((rect.height - canvasY - yOffset) / mapHeight) * yAxisRange;
 
     const lonPerMeter = (maxLon - minLon) / totalWidthMeters;
     const latPerMeter = (maxLat - minLat) / totalHeightMeters;

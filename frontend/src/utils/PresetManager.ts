@@ -1,3 +1,5 @@
+import { seedPresetsIfNeeded } from './seedPresets';
+
 export interface GraphConfig {
   title: string;
   channelNames: string[];
@@ -27,6 +29,7 @@ function generateId(): string {
 
 export function loadPresets(): GraphPreset[] {
   try {
+    seedPresetsIfNeeded(STORAGE_KEY);
     const saved = localStorage.getItem(STORAGE_KEY);
     if (!saved) {
       return [];

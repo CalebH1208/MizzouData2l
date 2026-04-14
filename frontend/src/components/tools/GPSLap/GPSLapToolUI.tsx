@@ -324,6 +324,7 @@ const GPSLapToolUI: React.FC<GPSLapToolUIProps> = ({ fragment }) => {
         flexDirection: 'column',
         gap: '8px',
         minWidth: 0,
+        minHeight: 0,
       }}>
         {error && (
           <div style={{

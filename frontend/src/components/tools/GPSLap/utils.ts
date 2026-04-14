@@ -1,4 +1,5 @@
 import { Preset } from './types';
+import { seedPresetsIfNeeded } from '../../../utils/seedPresets';
 
 export const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
   const R = 6371000;
@@ -29,6 +30,7 @@ export const getTickInterval = (range: number): number => {
 };
 
 export const loadPresets = (): Preset[] => {
+  seedPresetsIfNeeded('gpsLapAnalysisPresets');
   const savedPresets = localStorage.getItem('gpsLapAnalysisPresets');
   if (savedPresets) {
     try {

@@ -94,6 +94,11 @@ func (B *Basic_telemetry_file) LogFile_to_BTF() {
 	B.Tags = B.Parser.Tags
 	B.StructuredTags = B.Parser.StructuredTags
 	B.Channels = make(map[string]types.Stored_channel)
+	B.OriginalChannels = nil
+	B.Notes = nil
+	B.DeletedSegments = nil
+	B.ChangeLog = nil
+	B.TimeMutations = nil
 
 	// Count validated channels
 	validatedChannels := make([]Telemetry_channel, 0)
@@ -130,6 +135,12 @@ func (B *Basic_telemetry_file) LogFile_to_BTF() {
 	}
 
 	wg.Wait()
+
+	// Release parser data — it has been converted to float64 in Channels
+	for i := range B.Parser.Channels {
+		B.Parser.Channels[i].Data = nil
+		B.Parser.Channels[i].OriginalData = nil
+	}
 }
 
 func (B *Basic_telemetry_file) Write_BTF(overwrite bool) error {
@@ -422,6 +433,13 @@ func uint8ToOpType(v uint8) string {
 }
 
 func (B *Basic_telemetry_file) Read_BTF(filepath string) error {
+	B.OriginalChannels = nil
+	B.Channels = nil
+	B.Notes = nil
+	B.DeletedSegments = nil
+	B.ChangeLog = nil
+	B.TimeMutations = nil
+
 	f, err := os.Open(filepath)
 	if err != nil {
 		return err

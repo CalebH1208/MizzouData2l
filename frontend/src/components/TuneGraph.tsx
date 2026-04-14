@@ -38,9 +38,10 @@ interface TuneGraphProps {
   height?: number;
   disableContextMenu?: boolean;
   disableDragSelect?: boolean;
+  disableNotes?: boolean;
 }
 
-const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHeight, disableContextMenu = false, disableDragSelect = false }) => {
+const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHeight, disableContextMenu = false, disableDragSelect = false, disableNotes = false }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -155,35 +156,27 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
     }
   }, [viewportStart, viewportEnd]);
 
-  // Get dimensions and force re-render when container size changes
+  // Get dimensions and force re-render when container size changes.
+  // Depends on loading/metadata so the ResizeObserver re-attaches when
+  // the component switches between render paths (loading → graph).
   useEffect(() => {
     const updateDimensions = () => {
       if (containerRef.current) {
-        // Get dimensions directly from the container like the Stack Overflow solution
-        const width = containerRef.current.clientWidth || 800;
-        const height = containerRef.current.clientHeight || 600;
+        const width = containerRef.current.clientWidth;
+        const height = containerRef.current.clientHeight;
 
-        setDimensions({ width, height });
-        setForceRender(prev => prev + 1);
+        if (width > 0 && height > 0) {
+          setDimensions(prev => {
+            if (prev.width !== width || prev.height !== height) {
+              return { width, height };
+            }
+            return prev;
+          });
+          setForceRender(prev => prev + 1);
+        }
       }
     };
 
-    // Initial sizing
-    updateDimensions();
-
-    // Force a second update after a brief delay to ensure DOM is fully rendered
-    const timeoutId = setTimeout(() => {
-      updateDimensions();
-    }, 100);
-
-    // Listen for window resize
-    const handleResize = () => {
-      updateDimensions();
-    };
-
-    window.addEventListener('resize', handleResize);
-
-    // Also use ResizeObserver for container-specific resizing
     const resizeObserver = new ResizeObserver(() => {
       updateDimensions();
     });
@@ -192,12 +185,13 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       resizeObserver.observe(containerRef.current);
     }
 
+    window.addEventListener('resize', updateDimensions);
+
     return () => {
-      clearTimeout(timeoutId);
-      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('resize', updateDimensions);
       resizeObserver.disconnect();
     };
-  }, []);
+  }, [loading, metadata]);
 
   // Use actual dimensions (props override state if provided)
   const width = propWidth || dimensions.width;
@@ -716,7 +710,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
 
     // Note highlights and icons
     const computedIcons: Array<{id: string, x: number, y: number, title: string, startTime: number, endTime: number}> = [];
-    if (viewportData.notes && viewportData.notes.length > 0) {
+    if (!disableNotes && viewportData.notes && viewportData.notes.length > 0) {
       viewportData.notes.forEach(note => {
         const noteVisStart = Math.max(note.startTime, viewportStart);
         const noteVisEnd = Math.min(note.endTime, viewportEnd);
@@ -1179,7 +1173,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       )}
 
       {/* Note icons rendered as React overlays so clicks are stable across D3 re-renders */}
-      {noteIcons.map(icon => (
+      {!disableNotes && noteIcons.map(icon => (
         <div
           key={icon.id}
           onClick={() => setNotePanel({ start: icon.startTime, end: icon.endTime, existingId: icon.id })}
@@ -1428,7 +1422,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
       )}
 
       {/* Note editor panel */}
-      {notePanel && (
+      {!disableNotes && notePanel && (
         <NotePanel
           startTime={notePanel.start}
           endTime={notePanel.end}

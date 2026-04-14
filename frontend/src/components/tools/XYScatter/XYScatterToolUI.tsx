@@ -26,7 +26,8 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
     yMax: '',
     colorMin: '',
     colorMax: '',
-    enabled: false
+    enabled: false,
+    squared: false,
   });
 
   const svgRef = useRef<SVGSVGElement>(null);
@@ -219,6 +220,36 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
     handleExecute(randomX, randomY, randomColor);
   };
 
+  const handleSquareXY = () => {
+    if (!result || !result.metadata) return;
+    const meta = result.metadata as any;
+    const xR = meta.xRange as [number, number] | undefined;
+    const yR = meta.yRange as [number, number] | undefined;
+    if (!xR || !yR) return;
+
+    const xSize = xR[1] - xR[0];
+    const ySize = yR[1] - yR[0];
+    const size = Math.max(xSize, ySize) * 1.04;
+
+    const xCenter = (xR[0] + xR[1]) / 2;
+    const yCenter = (yR[0] + yR[1]) / 2;
+
+    const newXMin = xCenter - size / 2;
+    const newXMax = xCenter + size / 2;
+    const newYMin = yCenter - size / 2;
+    const newYMax = yCenter + size / 2;
+
+    setBoundsConfig({
+      ...boundsConfig,
+      enabled: true,
+      squared: true,
+      xMin: String(newXMin),
+      xMax: String(newXMax),
+      yMin: String(newYMin),
+      yMax: String(newYMax),
+    });
+  };
+
   const handleExportPNG = async () => {
     if (!svgRef.current || !result) return;
     await exportToPNG(svgRef.current, result.metadata, setError);
@@ -300,6 +331,7 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
           onExecute={() => handleExecute()}
           onGoBackZoom={handleGoBackZoom}
           onBoundsConfigChange={setBoundsConfig}
+          onSquareXY={handleSquareXY}
           onFeelingLucky={handleFeelingLucky}
           onExportPNG={handleExportPNG}
           hasResult={!!result}

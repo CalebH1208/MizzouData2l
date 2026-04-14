@@ -1,7 +1,9 @@
 import { Preset } from './types';
 import { SaveFileDialog, WriteFile } from '../../../../wailsjs/go/main/App';
+import { seedPresetsIfNeeded } from '../../../utils/seedPresets';
 
 export const loadPresets = (): Preset[] => {
+  seedPresetsIfNeeded('shiftAnalysisPresets');
   const savedPresets = localStorage.getItem('shiftAnalysisPresets');
   if (savedPresets) {
     try {
