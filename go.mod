@@ -1,6 +1,6 @@
 module MizzouDataTool
 
-go 1.24
+go 1.24.0
 
 toolchain go1.24.1
 
@@ -11,6 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.1.10
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.97.1
 	github.com/wailsapp/wails/v2 v2.10.2
+	gonum.org/v1/gonum v0.17.0
 )
 
 require (
@@ -55,7 +56,7 @@ require (
 	golang.org/x/crypto v0.33.0 // indirect
 	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect
-	golang.org/x/text v0.22.0 // indirect
+	golang.org/x/text v0.23.0 // indirect
 )
 
 // replace github.com/wailsapp/wails/v2 v2.10.2 => C:\Users\caleb\go\pkg\mod

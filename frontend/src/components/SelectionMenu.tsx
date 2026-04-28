@@ -7,6 +7,7 @@ type SelectionMenuProps = {
   endTime: number;
   onDelete: (start: number, end: number) => void;
   onNote: (start: number, end: number) => void;
+  onExport: (start: number, end: number) => void;
   onClose: () => void;
 };
 
@@ -17,6 +18,7 @@ const SelectionMenu: React.FC<SelectionMenuProps> = ({
   endTime,
   onDelete,
   onNote,
+  onExport,
   onClose,
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -56,6 +58,12 @@ const SelectionMenu: React.FC<SelectionMenuProps> = ({
         onClick={() => { onNote(startTime, endTime); onClose(); }}
       >
         Add Note
+      </button>
+      <button
+        style={{ ...styles.button, backgroundColor: '#2E7D32' }}
+        onClick={() => { onExport(startTime, endTime); onClose(); }}
+      >
+        Export as PNG
       </button>
     </div>
   );

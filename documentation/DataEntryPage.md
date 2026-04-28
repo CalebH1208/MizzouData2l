@@ -8,7 +8,7 @@ Import, validate, and configure CSV telemetry log files. This page converts raw 
 
 ## Workflow Overview
 
-1. Select a CSV file or folder containing log files.
+1. Select a folder containing 100hz log,
 2. Review the detected channels, their data ranges, and any warnings.
 3. Configure each channel (units, conversions, range limits).
 4. Validate all required channels.

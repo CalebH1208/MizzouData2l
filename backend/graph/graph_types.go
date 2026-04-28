@@ -11,6 +11,7 @@ const MAX_POINTS_ON_SCREEN int = 15000
 
 type Full_graph struct {
 	stored_file_manager *Backend.Basic_telemetry_file
+	previewParser       *Backend.Telemetry_file
 	FullTimeStamps      []float64
 
 	ViewableChannels map[string]*Data_channel

@@ -326,9 +326,18 @@ func (fg *Full_graph) LoadMultiFileMRTF(filePath string) error {
 	fg.TimeMutations = make([]types.TimeMutation, 0)
 	fg.HasUnsavedChanges = false
 
-	fg.stored_file_manager = btf
+	sfm := fg.stored_file_manager
+	sfm.Name = btf.Name
+	sfm.Tags = btf.Tags
+	sfm.StructuredTags = btf.StructuredTags
+	sfm.Channels = btf.Channels
+	sfm.Notes = btf.Notes
+	sfm.DeletedSegments = btf.DeletedSegments
+	sfm.ChangeLog = btf.ChangeLog
+	sfm.TimeMutations = btf.TimeMutations
+	sfm.OriginalChannels = btf.OriginalChannels
 
-	fg.FullTimeStamps = btf.Channels["Time"].Data
+	fg.FullTimeStamps = sfm.Channels["Time"].Data
 	totalPoints := len(fg.FullTimeStamps)
 
 	for name, storedChannel := range btf.Channels {

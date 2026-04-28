@@ -6,8 +6,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // findRequiredFiles searches for the 3 required CSV files (case-insensitive)
@@ -18,7 +20,6 @@ func findRequiredFiles(folderPath string) (hz100, hz10, hz1 string, err error) {
 		"100HZLOG.CSV": &hz100,
 	}
 
-	// Walk the directory to find files
 	entries, err := os.ReadDir(folderPath)
 	if err != nil {
 		return "", "", "", fmt.Errorf("failed to read directory: %w", err)
@@ -34,7 +35,6 @@ func findRequiredFiles(folderPath string) (hz100, hz10, hz1 string, err error) {
 		}
 	}
 
-	// Check if all files were found
 	missing := []string{}
 	for name, ptr := range requiredFiles {
 		if *ptr == "" {
@@ -48,7 +48,6 @@ func findRequiredFiles(folderPath string) (hz100, hz10, hz1 string, err error) {
 	return hz100, hz10, hz1, nil
 }
 
-// headerInfo stores the 4-line header information
 type headerInfo struct {
 	columns    []string
 	units      []string
@@ -56,11 +55,23 @@ type headerInfo struct {
 	precision  []string
 }
 
-// detectHeaderFormat checks if file has 4-line extended headers or 1-line simple headers
-func detectHeaderFormat(filePath string) (bool, string, error) {
+// parsedFile is the column-major in-memory representation of a cleaned CSV.
+// values[col] is a []float64 of length len(times) with that column's parsed data.
+// times is the parsed time column (same length as each values[col]).
+type parsedFile struct {
+	header     headerInfo
+	times      []int64
+	values     [][]float64 // values[colIdx][rowIdx]
+	timeColIdx int
+}
+
+// detectHeaderFormat checks if file has 4-line extended headers or 1-line simple headers.
+// Returns hasExtended, headerLine (joined), and an open csv.Reader positioned just past
+// the headers — caller can stream the rest.
+func detectHeaderFormat(filePath string) (bool, []string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return false, "", err
+		return false, nil, err
 	}
 	defer file.Close()
 
@@ -72,13 +83,13 @@ func detectHeaderFormat(filePath string) (bool, string, error) {
 			break
 		}
 		if err != nil {
-			return false, "", err
+			return false, nil, err
 		}
 		lines = append(lines, line)
 	}
 
 	if len(lines) < 2 {
-		return false, "", fmt.Errorf("file too short")
+		return false, nil, fmt.Errorf("file too short")
 	}
 
 	headerLine := lines[0]
@@ -93,33 +104,28 @@ func detectHeaderFormat(filePath string) (bool, string, error) {
 			}
 		}
 		if isDuplicate {
-			return false, strings.Join(headerLine, ","), nil
+			return false, headerLine, nil
 		}
 	}
 
-	// Try to parse second line as numeric data
-	_, err = strconv.ParseInt(lines[1][0], 10, 64)
-	if err == nil {
-		// Second line is numeric, so we have simple header
-		return false, strings.Join(headerLine, ","), nil
+	// Try to parse second line as numeric data — simple header
+	if _, err := strconv.ParseInt(lines[1][0], 10, 64); err == nil {
+		return false, headerLine, nil
 	}
 
 	// Second line is not numeric, assume extended header
-	return true, strings.Join(headerLine, ","), nil
+	return true, headerLine, nil
 }
 
-// cleanedData holds the cleaned CSV data with standardized 4-line header
-type cleanedData struct {
-	header headerInfo
-	data   [][]string
-}
-
-// cleanCSVData removes header repetitions and handles time restarts
-func cleanCSVData(filePath string) (*cleanedData, error) {
-	hasExtended, headerLine, err := detectHeaderFormat(filePath)
+// parseFileColumnMajor reads a CSV, cleans header repetitions and time restarts,
+// and returns a column-major float64 representation. This replaces the old
+// cleanCSVData → interpolateToTimeline pipeline that parsed every value twice.
+func parseFileColumnMajor(filePath string) (*parsedFile, error) {
+	hasExtended, headerCols, err := detectHeaderFormat(filePath)
 	if err != nil {
 		return nil, err
 	}
+	expectedColumns := len(headerCols)
 
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -128,181 +134,282 @@ func cleanCSVData(filePath string) (*cleanedData, error) {
 	defer file.Close()
 
 	reader := csv.NewReader(file)
-	allLines, err := reader.ReadAll()
-	if err != nil {
-		return nil, err
-	}
+	reader.FieldsPerRecord = -1 // tolerate variable-width rows
+	reader.ReuseRecord = true   // avoids per-row allocation; we copy what we keep
 
+	// Skip the header lines we already read in detectHeaderFormat.
 	headerLinesCount := 1
 	if hasExtended {
 		headerLinesCount = 4
 	}
 
-	if len(allLines) < headerLinesCount {
-		return nil, fmt.Errorf("file too short")
+	// Read header lines from this fresh reader.
+	header := headerInfo{
+		columns:    headerCols,
+		units:      make([]string, expectedColumns),
+		conversion: make([]string, expectedColumns),
+		precision:  make([]string, expectedColumns),
 	}
 
-	// Parse header columns
-	headerCols := strings.Split(headerLine, ",")
-	expectedColumns := len(headerCols)
-
-	// Check if line 2 is a duplicate header (for simple header files)
-	hasDuplicateHeader := false
-	if !hasExtended && len(allLines) >= 2 && len(allLines[1]) == len(allLines[0]) {
-		isDuplicate := true
-		for i := range allLines[0] {
-			if allLines[1][i] != allLines[0][i] {
-				isDuplicate = false
-				break
+	if hasExtended {
+		for i := 0; i < headerLinesCount; i++ {
+			line, err := reader.Read()
+			if err != nil {
+				return nil, fmt.Errorf("failed to read header line %d: %w", i, err)
+			}
+			switch i {
+			case 1:
+				copy(header.units, line)
+			case 2:
+				copy(header.conversion, line)
+			case 3:
+				copy(header.precision, line)
 			}
 		}
-		hasDuplicateHeader = isDuplicate
-	}
-
-	// Create standardized 4-line header
-	result := &cleanedData{
-		header: headerInfo{
-			columns:    headerCols,
-			units:      make([]string, expectedColumns),
-			conversion: make([]string, expectedColumns),
-			precision:  make([]string, expectedColumns),
-		},
-		data: [][]string{},
-	}
-
-	if hasExtended && len(allLines) >= 4 {
-		// Use existing extended header
-		result.header.units = allLines[1]
-		result.header.conversion = allLines[2]
-		result.header.precision = allLines[3]
 	} else {
-		// Create default header from single line
+		// Consume first line; defaults for the missing rows.
+		if _, err := reader.Read(); err != nil {
+			return nil, err
+		}
 		for i := 0; i < expectedColumns; i++ {
-			result.header.units[i] = "unknown"
-			result.header.conversion[i] = "-7"
-			result.header.precision[i] = "32"
+			header.units[i] = "unknown"
+			header.conversion[i] = "-7"
+			header.precision[i] = "32"
 		}
 	}
 
-	// Process data lines with time offset correction
-	var lastTime int64 = 0
-	var timeOffset int64 = 0
-
-	i := headerLinesCount
-	if hasDuplicateHeader {
-		i++
+	timeColIdx := findTimeColumn(headerCols)
+	if timeColIdx == -1 {
+		return nil, fmt.Errorf("time column not found in %s", filepath.Base(filePath))
 	}
-	for i < len(allLines) {
-		line := allLines[i]
 
-		// Check if this is a header repetition
-		if len(line) > 0 && strings.Join(line, ",") == headerLine {
-			i += headerLinesCount
+	// Pre-grow column slices; we'll trim later.
+	values := make([][]float64, expectedColumns)
+	for j := range values {
+		values[j] = make([]float64, 0, 1024)
+	}
+	times := make([]int64, 0, 1024)
+
+	var (
+		lastTime   int64 = 0
+		timeOffset int64 = 0
+		duplicateHeaderChecked = !hasExtended // simple-header files may have a duplicate row
+	)
+
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(record) == 0 {
 			continue
 		}
 
-		// Process data line
-		if len(line) > 0 {
-			// Fix malformed lines with extra data points
-			if len(line) > expectedColumns {
-				line = line[:expectedColumns]
-			}
-
-			if len(line) >= 2 {
-				currentTime, err := strconv.ParseInt(line[0], 10, 64)
-				if err == nil {
-					// Apply time offset
-					adjustedTime := currentTime + timeOffset
-
-					// Check if time has restarted
-					if adjustedTime < lastTime {
-						timeOffset = lastTime
-						adjustedTime = currentTime + timeOffset
+		// Skip a duplicate of the header on the first iteration after a simple header.
+		if !duplicateHeaderChecked {
+			duplicateHeaderChecked = true
+			if len(record) == expectedColumns {
+				dup := true
+				for i := range record {
+					if record[i] != headerCols[i] {
+						dup = false
+						break
 					}
-
-					// Update with adjusted time
-					line[0] = strconv.FormatInt(adjustedTime, 10)
-
-					// Only add if we have the right number of columns
-					if len(line) == expectedColumns {
-						result.data = append(result.data, line)
-						lastTime = adjustedTime
-					}
+				}
+				if dup {
+					continue
 				}
 			}
 		}
-		i++
-	}
 
-	return result, nil
-}
+		// Skip header repetitions sprinkled mid-file.
+		if len(record) == expectedColumns && record[timeColIdx] == headerCols[timeColIdx] {
+			equalsHeader := true
+			for i := range record {
+				if record[i] != headerCols[i] {
+					equalsHeader = false
+					break
+				}
+			}
+			if equalsHeader {
+				if hasExtended {
+					for k := 1; k < headerLinesCount; k++ {
+						if _, err := reader.Read(); err != nil {
+							goto finishedScanning
+						}
+					}
+				}
+				continue
+			}
+		}
 
-// interpolateFloat performs linear interpolation
-func interpolateFloat(targetTime, t1, t2 int64, v1, v2 float64) float64 {
-	if t2 == t1 {
-		return v1
-	}
-	return v1 + (v2-v1)*float64(targetTime-t1)/float64(t2-t1)
-}
+		// Truncate over-long rows.
+		if len(record) > expectedColumns {
+			record = record[:expectedColumns]
+		}
+		if len(record) != expectedColumns {
+			continue
+		}
 
-// interpolateToTimeline interpolates data from source to match target times
-func interpolateToTimeline(sourceData *cleanedData, targetTimes []int64, timeColIdx int) ([][]float64, error) {
-	if len(sourceData.data) == 0 {
-		return nil, fmt.Errorf("source data is empty")
-	}
-
-	numCols := len(sourceData.header.columns)
-	result := make([][]float64, len(targetTimes))
-
-	// Parse source times and data
-	sourceTimes := make([]int64, len(sourceData.data))
-	sourceValues := make([][]float64, len(sourceData.data))
-
-	for i, row := range sourceData.data {
-		t, err := strconv.ParseInt(row[timeColIdx], 10, 64)
+		currentTime, err := strconv.ParseInt(record[timeColIdx], 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse time: %w", err)
+			continue
 		}
-		sourceTimes[i] = t
+		adjustedTime := currentTime + timeOffset
+		if adjustedTime < lastTime {
+			timeOffset = lastTime
+			adjustedTime = currentTime + timeOffset
+		}
 
-		sourceValues[i] = make([]float64, numCols)
-		for j, val := range row {
-			v, err := strconv.ParseFloat(val, 64)
+		times = append(times, adjustedTime)
+		lastTime = adjustedTime
+
+		for j := 0; j < expectedColumns; j++ {
+			if j == timeColIdx {
+				values[j] = append(values[j], float64(adjustedTime))
+				continue
+			}
+			s := record[j]
+			if s == "" {
+				values[j] = append(values[j], 0)
+				continue
+			}
+			v, err := strconv.ParseFloat(s, 64)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse value: %w", err)
+				values[j] = append(values[j], 0)
+				continue
 			}
-			sourceValues[i][j] = v
+			values[j] = append(values[j], v)
+		}
+	}
+finishedScanning:
+
+	return &parsedFile{
+		header:     header,
+		times:      times,
+		values:     values,
+		timeColIdx: timeColIdx,
+	}, nil
+}
+
+// dropGlobalColumns filters out columns whose names contain "global".
+// Operates on the column-major representation (no row copies).
+func dropGlobalColumns(p *parsedFile) {
+	keep := make([]int, 0, len(p.header.columns))
+	for i, col := range p.header.columns {
+		if !strings.Contains(strings.ToLower(col), "global") {
+			keep = append(keep, i)
+		}
+	}
+	if len(keep) == len(p.header.columns) {
+		return
+	}
+
+	newCols := make([]string, len(keep))
+	newUnits := make([]string, len(keep))
+	newConv := make([]string, len(keep))
+	newPrec := make([]string, len(keep))
+	newValues := make([][]float64, len(keep))
+
+	for newIdx, oldIdx := range keep {
+		newCols[newIdx] = p.header.columns[oldIdx]
+		newUnits[newIdx] = p.header.units[oldIdx]
+		newConv[newIdx] = p.header.conversion[oldIdx]
+		newPrec[newIdx] = p.header.precision[oldIdx]
+		newValues[newIdx] = p.values[oldIdx]
+	}
+	p.header.columns = newCols
+	p.header.units = newUnits
+	p.header.conversion = newConv
+	p.header.precision = newPrec
+	p.values = newValues
+	p.timeColIdx = findTimeColumn(newCols)
+}
+
+// interpolateColumnMajor maps every non-time column of src onto targetTimes via
+// linear interpolation. Columns are independent, so we parallelize across them.
+func interpolateColumnMajor(src *parsedFile, targetTimes []int64) [][]float64 {
+	numCols := len(src.values)
+	out := make([][]float64, numCols)
+	if len(src.times) == 0 {
+		for j := range out {
+			out[j] = make([]float64, len(targetTimes))
+		}
+		return out
+	}
+
+	// Pre-compute, for each target time, the source index "left of" it.
+	// Single linear pass since both arrays are sorted.
+	leftIdx := make([]int, len(targetTimes))
+	{
+		i := 0
+		for t := 0; t < len(targetTimes); t++ {
+			for i < len(src.times)-1 && src.times[i+1] < targetTimes[t] {
+				i++
+			}
+			leftIdx[t] = i
 		}
 	}
 
-	// Interpolate for each target time
-	for i, targetTime := range targetTimes {
-		result[i] = make([]float64, numCols)
-
-		// Find surrounding source times
-		sourceIdx := 0
-		for sourceIdx < len(sourceTimes)-1 && sourceTimes[sourceIdx+1] < targetTime {
-			sourceIdx++
-		}
-
-		// Handle edge cases
-		if targetTime <= sourceTimes[0] {
-			result[i] = sourceValues[0]
-		} else if targetTime >= sourceTimes[len(sourceTimes)-1] {
-			result[i] = sourceValues[len(sourceTimes)-1]
-		} else {
-			// Interpolate between sourceIdx and sourceIdx+1
-			t1 := sourceTimes[sourceIdx]
-			t2 := sourceTimes[sourceIdx+1]
-			for j := 0; j < numCols; j++ {
-				v1 := sourceValues[sourceIdx][j]
-				v2 := sourceValues[sourceIdx+1][j]
-				result[i][j] = interpolateFloat(targetTime, t1, t2, v1, v2)
-			}
-		}
+	var wg sync.WaitGroup
+	workers := runtime.NumCPU()
+	if workers > numCols {
+		workers = numCols
 	}
+	if workers < 1 {
+		workers = 1
+	}
+	jobs := make(chan int, numCols)
+	for j := 0; j < numCols; j++ {
+		jobs <- j
+	}
+	close(jobs)
 
-	return result, nil
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				col := make([]float64, len(targetTimes))
+				if j == src.timeColIdx {
+					for t := range targetTimes {
+						col[t] = float64(targetTimes[t])
+					}
+					out[j] = col
+					continue
+				}
+				srcVals := src.values[j]
+				srcTimes := src.times
+				lastSrc := len(srcTimes) - 1
+				for t, target := range targetTimes {
+					if target <= srcTimes[0] {
+						col[t] = srcVals[0]
+						continue
+					}
+					if target >= srcTimes[lastSrc] {
+						col[t] = srcVals[lastSrc]
+						continue
+					}
+					i := leftIdx[t]
+					t1 := srcTimes[i]
+					t2 := srcTimes[i+1]
+					if t2 == t1 {
+						col[t] = srcVals[i]
+						continue
+					}
+					v1 := srcVals[i]
+					v2 := srcVals[i+1]
+					col[t] = v1 + (v2-v1)*float64(target-t1)/float64(t2-t1)
+				}
+				out[j] = col
+			}
+		}()
+	}
+	wg.Wait()
+	return out
 }
 
 // findTimeColumn finds the "Time" column (case-insensitive)
@@ -315,204 +422,184 @@ func findTimeColumn(columns []string) int {
 	return -1
 }
 
-// removeGlobalTimeColumns filters out columns with "global" in the name
-func removeGlobalTimeColumns(data *cleanedData) {
-	keep := []int{}
-	for i, col := range data.header.columns {
-		if !strings.Contains(strings.ToLower(col), "global") {
-			keep = append(keep, i)
-		}
-	}
-
-	// Filter columns
-	newCols := make([]string, len(keep))
-	newUnits := make([]string, len(keep))
-	newConv := make([]string, len(keep))
-	newPrec := make([]string, len(keep))
-
-	for newIdx, oldIdx := range keep {
-		newCols[newIdx] = data.header.columns[oldIdx]
-		newUnits[newIdx] = data.header.units[oldIdx]
-		newConv[newIdx] = data.header.conversion[oldIdx]
-		newPrec[newIdx] = data.header.precision[oldIdx]
-	}
-
-	data.header.columns = newCols
-	data.header.units = newUnits
-	data.header.conversion = newConv
-	data.header.precision = newPrec
-
-	// Filter data rows
-	for i := range data.data {
-		newRow := make([]string, len(keep))
-		for newIdx, oldIdx := range keep {
-			newRow[newIdx] = data.data[i][oldIdx]
-		}
-		data.data[i] = newRow
-	}
+// unifiedResult is the in-memory result of parsing+merging the 3 CSVs.
+// Columns are concatenated 100Hz + 10Hz(no time) + 1Hz(no time).
+type unifiedResult struct {
+	header headerInfo
+	values [][]float64 // column-major; values[col][row]
+	rows   int
 }
 
-// combineDataFiles combines three CSV files into one unified file
-func combineDataFiles(hz100Path, hz10Path, hz1Path, outputPath string) error {
-	// Clean all three files
-	data100, err := cleanCSVData(hz100Path)
+// processDirectoryInMemory does the complete CSV unification pipeline in memory,
+// parallelizing the three file reads and the per-column interpolation.
+// No intermediate CSV is written.
+func processDirectoryInMemory(directoryPath string) (*unifiedResult, error) {
+	hz100, hz10, hz1, err := findRequiredFiles(directoryPath)
 	if err != nil {
-		return fmt.Errorf("failed to clean 100Hz file: %w", err)
+		return nil, err
 	}
 
-	data10, err := cleanCSVData(hz10Path)
-	if err != nil {
-		return fmt.Errorf("failed to clean 10Hz file: %w", err)
+	// Stage 1: parse all three files in parallel.
+	type parseResult struct {
+		idx  int
+		data *parsedFile
+		err  error
 	}
-
-	data1, err := cleanCSVData(hz1Path)
-	if err != nil {
-		return fmt.Errorf("failed to clean 1Hz file: %w", err)
+	results := make(chan parseResult, 3)
+	paths := [3]string{hz100, hz10, hz1}
+	var wg sync.WaitGroup
+	for i, p := range paths {
+		wg.Add(1)
+		go func(i int, p string) {
+			defer wg.Done()
+			data, err := parseFileColumnMajor(p)
+			results <- parseResult{i, data, err}
+		}(i, p)
 	}
+	wg.Wait()
+	close(results)
 
-	// Remove global time columns
-	removeGlobalTimeColumns(data100)
-	removeGlobalTimeColumns(data10)
-	removeGlobalTimeColumns(data1)
-
-	// Find time column in 100Hz data
-	timeColIdx := findTimeColumn(data100.header.columns)
-	if timeColIdx == -1 {
-		return fmt.Errorf("time column not found in 100Hz data")
-	}
-
-	// Extract target times from 100Hz data
-	targetTimes := make([]int64, len(data100.data))
-	for i, row := range data100.data {
-		t, err := strconv.ParseInt(row[timeColIdx], 10, 64)
-		if err != nil {
-			return fmt.Errorf("failed to parse time from 100Hz data: %w", err)
+	parsed := [3]*parsedFile{}
+	for r := range results {
+		if r.err != nil {
+			return nil, fmt.Errorf("failed to parse %s: %w", filepath.Base(paths[r.idx]), r.err)
 		}
-		targetTimes[i] = t
+		parsed[r.idx] = r.data
 	}
 
-	// Find time columns in other files
-	timeColIdx10 := findTimeColumn(data10.header.columns)
-	if timeColIdx10 == -1 {
-		return fmt.Errorf("time column not found in 10Hz data")
+	// Stage 2: drop global-time columns from each (cheap, in-place).
+	dropGlobalColumns(parsed[0])
+	dropGlobalColumns(parsed[1])
+	dropGlobalColumns(parsed[2])
+
+	data100, data10, data1 := parsed[0], parsed[1], parsed[2]
+
+	if data100.timeColIdx == -1 {
+		return nil, fmt.Errorf("time column missing in 100Hz data after cleanup")
+	}
+	if data10.timeColIdx == -1 {
+		return nil, fmt.Errorf("time column missing in 10Hz data after cleanup")
+	}
+	if data1.timeColIdx == -1 {
+		return nil, fmt.Errorf("time column missing in 1Hz data after cleanup")
 	}
 
-	timeColIdx1 := findTimeColumn(data1.header.columns)
-	if timeColIdx1 == -1 {
-		return fmt.Errorf("time column not found in 1Hz data")
-	}
+	targetTimes := data100.times
 
-	// Interpolate 10Hz and 1Hz data to match 100Hz timeline
-	interp10, err := interpolateToTimeline(data10, targetTimes, timeColIdx10)
-	if err != nil {
-		return fmt.Errorf("failed to interpolate 10Hz data: %w", err)
-	}
+	// Stage 3: interpolate 10Hz and 1Hz against the 100Hz timeline in parallel.
+	var interp10, interp1 [][]float64
+	var stage3wg sync.WaitGroup
+	stage3wg.Add(2)
+	go func() {
+		defer stage3wg.Done()
+		interp10 = interpolateColumnMajor(data10, targetTimes)
+	}()
+	go func() {
+		defer stage3wg.Done()
+		interp1 = interpolateColumnMajor(data1, targetTimes)
+	}()
+	stage3wg.Wait()
 
-	interp1, err := interpolateToTimeline(data1, targetTimes, timeColIdx1)
-	if err != nil {
-		return fmt.Errorf("failed to interpolate 1Hz data: %w", err)
-	}
+	// Stage 4: assemble unified column-major result.
+	combined := headerInfo{}
+	combinedVals := make([][]float64, 0, len(data100.values)+len(data10.values)+len(data1.values))
 
-	// Build combined header
-	combinedHeader := headerInfo{
-		columns:    []string{},
-		units:      []string{},
-		conversion: []string{},
-		precision:  []string{},
-	}
+	combined.columns = append(combined.columns, data100.header.columns...)
+	combined.units = append(combined.units, data100.header.units...)
+	combined.conversion = append(combined.conversion, data100.header.conversion...)
+	combined.precision = append(combined.precision, data100.header.precision...)
+	combinedVals = append(combinedVals, data100.values...)
 
-	// Add 100Hz columns
-	combinedHeader.columns = append(combinedHeader.columns, data100.header.columns...)
-	combinedHeader.units = append(combinedHeader.units, data100.header.units...)
-	combinedHeader.conversion = append(combinedHeader.conversion, data100.header.conversion...)
-	combinedHeader.precision = append(combinedHeader.precision, data100.header.precision...)
-
-	// Add 10Hz columns (excluding time)
-	for i, col := range data10.header.columns {
-		if strings.ToLower(strings.TrimSpace(col)) != "time" {
-			combinedHeader.columns = append(combinedHeader.columns, col)
-			combinedHeader.units = append(combinedHeader.units, data10.header.units[i])
-			combinedHeader.conversion = append(combinedHeader.conversion, data10.header.conversion[i])
-			combinedHeader.precision = append(combinedHeader.precision, data10.header.precision[i])
+	for j, col := range data10.header.columns {
+		if strings.ToLower(strings.TrimSpace(col)) == "time" {
+			continue
 		}
+		combined.columns = append(combined.columns, col)
+		combined.units = append(combined.units, data10.header.units[j])
+		combined.conversion = append(combined.conversion, data10.header.conversion[j])
+		combined.precision = append(combined.precision, data10.header.precision[j])
+		combinedVals = append(combinedVals, interp10[j])
 	}
-
-	// Add 1Hz columns (excluding time)
-	for i, col := range data1.header.columns {
-		if strings.ToLower(strings.TrimSpace(col)) != "time" {
-			combinedHeader.columns = append(combinedHeader.columns, col)
-			combinedHeader.units = append(combinedHeader.units, data1.header.units[i])
-			combinedHeader.conversion = append(combinedHeader.conversion, data1.header.conversion[i])
-			combinedHeader.precision = append(combinedHeader.precision, data1.header.precision[i])
+	for j, col := range data1.header.columns {
+		if strings.ToLower(strings.TrimSpace(col)) == "time" {
+			continue
 		}
+		combined.columns = append(combined.columns, col)
+		combined.units = append(combined.units, data1.header.units[j])
+		combined.conversion = append(combined.conversion, data1.header.conversion[j])
+		combined.precision = append(combined.precision, data1.header.precision[j])
+		combinedVals = append(combinedVals, interp1[j])
 	}
 
-	// Write output file
-	outFile, err := os.Create(outputPath)
+	return &unifiedResult{
+		header: combined,
+		values: combinedVals,
+		rows:   len(targetTimes),
+	}, nil
+}
+
+// writeUnifiedCSV writes the unified result to fullData.csv as a cache for next load.
+// Writes to a temp file then renames so concurrent readers never see a partial file.
+func writeUnifiedCSV(outputPath string, u *unifiedResult) error {
+	tmpPath := outputPath + ".part"
+	outFile, err := os.Create(tmpPath)
 	if err != nil {
 		return fmt.Errorf("failed to create output file: %w", err)
 	}
-	defer outFile.Close()
 
 	writer := csv.NewWriter(outFile)
-	defer writer.Flush()
 
-	// Write 4-line header
-	if err := writer.Write(combinedHeader.columns); err != nil {
+	if err := writer.Write(u.header.columns); err != nil {
+		outFile.Close()
+		os.Remove(tmpPath)
 		return err
 	}
-	if err := writer.Write(combinedHeader.units); err != nil {
+	if err := writer.Write(u.header.units); err != nil {
+		outFile.Close()
+		os.Remove(tmpPath)
 		return err
 	}
-	if err := writer.Write(combinedHeader.conversion); err != nil {
+	if err := writer.Write(u.header.conversion); err != nil {
+		outFile.Close()
+		os.Remove(tmpPath)
 		return err
 	}
-	if err := writer.Write(combinedHeader.precision); err != nil {
+	if err := writer.Write(u.header.precision); err != nil {
+		outFile.Close()
+		os.Remove(tmpPath)
 		return err
 	}
 
-	// Write combined data rows
-	for i := range data100.data {
-		var row []string
-
-		// Add 100Hz data
-		row = append(row, data100.data[i]...)
-
-		// Add 10Hz interpolated data (excluding time column)
-		for j, col := range data10.header.columns {
-			if strings.ToLower(strings.TrimSpace(col)) != "time" {
-				value := interp10[i][j]
-				row = append(row, strconv.FormatFloat(value, 'f', -1, 64))
-			}
+	row := make([]string, len(u.values))
+	for r := 0; r < u.rows; r++ {
+		for c := range u.values {
+			row[c] = strconv.FormatFloat(u.values[c][r], 'f', -1, 64)
 		}
-
-		// Add 1Hz interpolated data (excluding time column)
-		for j, col := range data1.header.columns {
-			if strings.ToLower(strings.TrimSpace(col)) != "time" {
-				value := interp1[i][j]
-				row = append(row, strconv.FormatFloat(value, 'f', -1, 64))
-			}
-		}
-
 		if err := writer.Write(row); err != nil {
+			outFile.Close()
+			os.Remove(tmpPath)
 			return err
 		}
 	}
-
-	return nil
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		outFile.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := outFile.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, outputPath)
 }
 
-// ProcessDirectory is the main entry point - finds files and creates fullData.csv
+// ProcessDirectory is the legacy entry point — finds files and writes fullData.csv.
+// Retained for any external callers; uses the same in-memory pipeline.
 func ProcessDirectory(directoryPath string) error {
-	// Find required files
-	hz100, hz10, hz1, err := findRequiredFiles(directoryPath)
+	u, err := processDirectoryInMemory(directoryPath)
 	if err != nil {
 		return err
 	}
-
-	// Set output file path
-	outputPath := filepath.Join(directoryPath, "fullData.csv")
-
-	// Combine the files
-	return combineDataFiles(hz100, hz10, hz1, outputPath)
+	return writeUnifiedCSV(filepath.Join(directoryPath, "fullData.csv"), u)
 }

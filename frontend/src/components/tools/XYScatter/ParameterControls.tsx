@@ -422,6 +422,23 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
               title="Force X and Y axes to the same range, centered on the data"
             />
           </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '14px', marginLeft: '8px' }}>
+            <label style={{ fontSize: '10px', color: '#aaa', whiteSpace: 'nowrap' }}>Best Fit:</label>
+            <input
+              type="checkbox"
+              checked={boundsConfig.bestFit}
+              disabled={!hasResult}
+              onChange={(e) => onBoundsConfigChange({ ...boundsConfig, bestFit: e.target.checked })}
+              style={{
+                width: '16px',
+                height: '16px',
+                accentColor: '#F1B82D',
+                cursor: !hasResult ? 'not-allowed' : 'pointer',
+              }}
+              title="Draw a linear least-squares line of best fit for points within the manual bounds"
+            />
+          </div>
         </div>
       )}
     </div>

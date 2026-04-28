@@ -50,11 +50,14 @@ func (ks *KPI_search) CancelSearch() {
 }
 
 func (ks *KPI_search) isCancelled() bool {
-	if ks.cancelChan == nil {
+	ks.mutex.Lock()
+	ch := ks.cancelChan
+	ks.mutex.Unlock()
+	if ch == nil {
 		return false
 	}
 	select {
-	case <-ks.cancelChan:
+	case <-ch:
 		return true
 	default:
 		return false
@@ -464,16 +467,18 @@ func writeMinimalMRTF(f *os.File, btf *Basic_telemetry_file) error {
 }
 
 func writeResultInfo(path string, segmentPaths []string, name string) error {
-	import_json := fmt.Sprintf(`{"name":"%s","segments":[`, name)
-	for i, p := range segmentPaths {
-		if i > 0 {
-			import_json += ","
-		}
-		escaped := strings.ReplaceAll(p, "\\", "\\\\")
-		import_json += fmt.Sprintf(`"%s"`, escaped)
+	info := struct {
+		Name     string   `json:"name"`
+		Segments []string `json:"segments"`
+	}{
+		Name:     name,
+		Segments: segmentPaths,
 	}
-	import_json += "]}"
-	return os.WriteFile(path, []byte(import_json), 0644)
+	data, err := json.Marshal(info)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
 }
 
 func (ks *KPI_search) GetSearchResultFiles() ([]string, error) {

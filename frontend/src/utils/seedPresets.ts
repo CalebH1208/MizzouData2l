@@ -2,7 +2,6 @@ import defaultGraphPresets from '../assets/defaultPresets/graphPresets.json';
 import defaultScatterPresets from '../assets/defaultPresets/scatterPlotPresets.json';
 import defaultPowertrainPresets from '../assets/defaultPresets/powertrainToolPresets.json';
 import defaultDownforcePresets from '../assets/defaultPresets/downforceToolPresets.json';
-import defaultRideFrequencyPresets from '../assets/defaultPresets/rideFrequencyToolPresets.json';
 import defaultShiftAnalysisPresets from '../assets/defaultPresets/shiftAnalysisPresets.json';
 import defaultGpsLapPresets from '../assets/defaultPresets/gpsLapAnalysisPresets.json';
 
@@ -13,7 +12,6 @@ const DEFAULTS: Record<string, unknown> = {
   scatterPlotPresets: defaultScatterPresets,
   powertrainToolPresets: defaultPowertrainPresets,
   downforceToolPresets: defaultDownforcePresets,
-  rideFrequencyToolPresets: defaultRideFrequencyPresets,
   shiftAnalysisPresets: defaultShiftAnalysisPresets,
   gpsLapAnalysisPresets: defaultGpsLapPresets,
 };

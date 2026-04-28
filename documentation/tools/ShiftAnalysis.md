@@ -14,40 +14,36 @@ Analyze upshift events across a fragment — measuring shift duration, RPM behav
 | Channel | Description |
 |---------|-------------|
 | **RPM** | Engine rotational speed |
+| **Gear** | Current gear position |
 | **Speed** | Vehicle speed (mph or kph) |
-| **Longitudinal Acceleration** | Used to correlate shift events with traction response |
-| **Boost** *(optional)* | Turbo/supercharger boost pressure, if applicable |
+| **Longitudinal Acceleration** | Used to measure G-force drop and recovery through the shift |
+| **Shift Request** | Shift request signal from the ECU (1=idle, 2=lockout, 3=downshift, 4=upshift) |
+| **Pressure** *(optional)* | Pneumatic system pressure — enables pressure correlation analysis |
 
 ---
 
 ## How Shifts Are Detected
 
-The tool scans the RPM channel for characteristic upshift signatures: a rapid drop in RPM following a peak, indicating a gear change. Each event must exceed a minimum RPM drop threshold and contain a minimum number of data points to be counted as a valid shift.
+The tool scans the Shift Request channel for upshift (4) and downshift (3) request signals, then tracks the actual gear change in the Gear channel to confirm the event. Reaction time (request to gear change), shift duration (gear change to stabilization), and G-force behavior are extracted for each event.
 
 ---
 
 ## Output
 
 ### Upshift Overlay
-All detected upshift events are aligned by their shift point and overlaid on a single time-axis chart. This shows how consistently the RPM profile behaves from shift to shift — tight clustering indicates consistent shift execution.
+All detected upshift events are aligned by their shift point and overlaid on a single longitudinal-G time-axis chart. This shows how consistently the G-force profile behaves from shift to shift — tight clustering indicates consistent shift execution.
 
-### Shift Statistics Panel
-For each detected shift event:
-- Timestamp (when the shift occurred)
-- RPM at the shift point (peak before drop)
-- RPM drop magnitude
-- Shift duration (time from peak RPM to RPM recovery)
-- Associated speed at time of shift
-- Boost pressure at time of shift *(if channel provided)*
+### Downshift Scatter
+Plots blip accuracy (RPM error vs. target) per downshift event, grouped by gear pair.
 
-Summary statistics across all shifts:
-- Mean shift duration
-- Standard deviation of shift duration (consistency metric)
-- Mean RPM drop
-- Total shift count
+### Pressure Correlation *(requires Pressure channel)*
+Scatter plot of pneumatic pressure vs. shift duration with a linear regression trend line.
 
-### Trend Analysis
-A chart showing shift duration over time (in the order shifts occurred). An upward trend may indicate increasing gear wear or driver fatigue; a downward trend may indicate warming drivetrain components.
+### Metrics Table
+Full per-event data including reaction time, shift duration, G-force drop, recovery time, RPM error, and shift energy loss.
+
+### KPI Summary
+Aggregate statistics across all shifts: average reaction time, average shift duration, blip match percentage, shift variance by gear pair, and total shift count.
 
 ---
 

@@ -217,3 +217,110 @@ func (fg *Full_graph) GetViewportData(req Viewport_request) (*Viewport_response,
 	return response, nil
 
 }
+
+func (fg *Full_graph) GetExportViewportData(startTime, endTime float64) (*Viewport_response, error) {
+	fg.mutex.RLock()
+	defer fg.mutex.RUnlock()
+
+	if len(fg.FullTimeStamps) == 0 {
+		return nil, fmt.Errorf("no graph data loaded")
+	}
+
+	// Always use LOD step 1 (full resolution) for export
+	const lodStep = 1
+	var referenceLOD *LOD_data_line
+	for _, channel := range fg.ViewableChannels {
+		if lod, exists := channel.DataLines[lodStep]; exists {
+			referenceLOD = lod
+			break
+		}
+	}
+	if referenceLOD == nil {
+		return nil, fmt.Errorf("LOD level 1 not found")
+	}
+
+	startIdx := fg.findTimeIndex(referenceLOD.Timestamps, startTime)
+	endIdx := fg.findTimeIndex(referenceLOD.Timestamps, endTime) + 1
+
+	if endIdx <= startIdx {
+		endIdx = startIdx + 1
+	}
+	if endIdx > len(referenceLOD.Timestamps) {
+		endIdx = len(referenceLOD.Timestamps)
+	}
+
+	response := &Viewport_response{
+		Timestamps:      referenceLOD.Timestamps[startIdx:endIdx],
+		OriginalIndices: referenceLOD.IndexMap[startIdx:endIdx],
+		Graphs:          make([]Graph_viewport, 0, len(fg.Graphs)),
+		LODStep:         lodStep,
+		TotalPoints:     endIdx - startIdx,
+		ViewportStart:   referenceLOD.Timestamps[startIdx],
+		ViewportEnd:     referenceLOD.Timestamps[endIdx-1],
+	}
+
+	for _, graph := range fg.Graphs {
+		graphViewport := Graph_viewport{
+			Index:        graph.Index,
+			Title:        graph.Title,
+			YRange:       graph.YRange,
+			UseSplitAxis: graph.UseSplitAxis,
+			Channels:     make([]Channel_viewport, 0, len(graph.DataChannels)),
+		}
+
+		for _, channelName := range graph.DataChannels {
+			channel, exists := fg.ViewableChannels[channelName]
+			if !exists {
+				continue
+			}
+			lodData, exists := channel.DataLines[lodStep]
+			if !exists {
+				continue
+			}
+
+			channelYRange := [2]float64{0, 0}
+			if graph.UseSplitAxis {
+				if chRange, exists := graph.ChannelRanges[channelName]; exists {
+					channelYRange = chRange
+				}
+			}
+
+			graphViewport.Channels = append(graphViewport.Channels, Channel_viewport{
+				Name:   channel.Name,
+				Unit:   channel.Unit,
+				Color:  channel.Color,
+				Values: lodData.Values[startIdx:endIdx],
+				YRange: channelYRange,
+			})
+		}
+
+		response.Graphs = append(response.Graphs, graphViewport)
+	}
+
+	// Include file boundaries that fall within the selected range
+	if fg.IsMultiFile && len(fg.FileBoundaries) > 0 {
+		response.FileBoundaryIndices = make([]int, 0)
+		response.FileBoundaryLabels = make([]File_boundary_label, 0)
+
+		viewportStartTime := referenceLOD.Timestamps[startIdx]
+		viewportEndTime := referenceLOD.Timestamps[endIdx-1]
+
+		for boundaryIdx, boundaryTime := range fg.FileBoundaries {
+			if boundaryTime >= viewportStartTime && boundaryTime <= viewportEndTime {
+				relativeIdx := fg.findTimeIndex(
+					referenceLOD.Timestamps[startIdx:endIdx],
+					boundaryTime,
+				)
+				response.FileBoundaryIndices = append(response.FileBoundaryIndices, relativeIdx)
+				response.FileBoundaryLabels = append(response.FileBoundaryLabels, File_boundary_label{
+					TimestampIndex: relativeIdx,
+					FileName:       fg.FileMetadata[boundaryIdx+1].DisplayName,
+					Order:          boundaryIdx + 1,
+				})
+			}
+		}
+		response.FileMetadataList = fg.FileMetadata
+	}
+
+	return response, nil
+}

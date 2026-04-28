@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as d3 from 'd3';
-import { GetGraphMetadata, GetViewportData, SetCursorPosition, GetCursorData, AddExportMarker, RemoveExportMarker, AddNote, EditNote, DeleteNote, DeleteSegment } from '../../wailsjs/go/graph/Full_graph';
+import { GetGraphMetadata, GetViewportData, SetCursorPosition, GetCursorData, AddExportMarker, RemoveExportMarker, AddNote, EditNote, DeleteNote, DeleteSegment, GetExportViewportData } from '../../wailsjs/go/graph/Full_graph';
 import { graph } from '../../wailsjs/go/models';
 import { EventsOn, EventsOff, EventsEmit } from '../../wailsjs/runtime/runtime';
 import SelectionMenu from './SelectionMenu';
 import NotePanel from './NotePanel';
 import ConfirmDialog from './ConfirmDialog';
+import ExportPreviewModal from './ExportPreviewModal';
 
 // Sanitize channel name for use in CSS class selector
 function sanitizeClassName(name: string): string {
@@ -84,6 +85,7 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
   const [selectionMenu, setSelectionMenu] = useState<{x: number, y: number, start: number, end: number} | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{start: number, end: number} | null>(null);
   const [notePanel, setNotePanel] = useState<{start: number, end: number, existingId?: string} | null>(null);
+  const [exportModal, setExportModal] = useState<{viewportData: graph.Viewport_response, startTime: number, endTime: number, defaultTitle: string} | null>(null);
   // Note icon positions computed by D3, rendered as React overlays so clicks are stable
   const [noteIcons, setNoteIcons] = useState<Array<{id: string, x: number, y: number, title: string, startTime: number, endTime: number}>>([]);
 
@@ -1372,10 +1374,35 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
             setDragSelect(null);
             setSelectionMenu(null);
           }}
+          onExport={async (start, end) => {
+            setDragSelect(null);
+            setSelectionMenu(null);
+            try {
+              const [exportData, meta] = await Promise.all([
+                GetExportViewportData(start, end),
+                GetGraphMetadata(),
+              ]);
+              const title = meta?.graphInfo?.[0]?.title || `${start.toFixed(2)}s – ${end.toFixed(2)}s`;
+              setExportModal({ viewportData: exportData, startTime: start, endTime: end, defaultTitle: title });
+            } catch (err) {
+              console.error('Failed to load export data:', err);
+            }
+          }}
           onClose={() => {
             setSelectionMenu(null);
             setDragSelect(null);
           }}
+        />
+      )}
+
+      {/* PNG export preview modal */}
+      {exportModal && (
+        <ExportPreviewModal
+          viewportData={exportModal.viewportData}
+          defaultTitle={exportModal.defaultTitle}
+          startTime={exportModal.startTime}
+          endTime={exportModal.endTime}
+          onClose={() => setExportModal(null)}
         />
       )}
 

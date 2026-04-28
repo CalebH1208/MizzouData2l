@@ -2,6 +2,9 @@ package Backend
 
 import (
 	"fmt"
+	"math"
+	"sort"
+	"strings"
 	"sync"
 )
 
@@ -67,21 +70,33 @@ func (tm *Tool_manager) ExtractFragmentsFromMarkers() ([]string, error) {
 		go func(index int, p [2]float64) {
 			defer wg.Done()
 
-			id, err := tm.ExtractDataFragment(p[0], p[1])
+			if p[0] >= p[1] {
+				errChan <- fmt.Errorf("failed to extract fragment for markers %.2f-%.2f: start time must be less than end time", p[0], p[1])
+				return
+			}
+			fragment, err := tm.fullGraph.ExtractRawDataBetweenTimes(p[0], p[1])
 			if err != nil {
 				errChan <- fmt.Errorf("failed to extract fragment for markers %.2f-%.2f: %v", p[0], p[1], err)
 				return
 			}
 
-			fragmentIDs[index] = id
+			tm.mutex.Lock()
+			tm.fragments[fragment.ID] = fragment
+			tm.mutex.Unlock()
+
+			fragmentIDs[index] = fragment.ID
 		}(i, pair)
 	}
 
 	wg.Wait()
 	close(errChan)
 
-	if err := <-errChan; err != nil {
-		return nil, err
+	var errs []string
+	for err := range errChan {
+		errs = append(errs, err.Error())
+	}
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
 
 	if len(fragmentIDs) > 1 {
@@ -192,14 +207,9 @@ func (tm *Tool_manager) GetSourceFragmentsMetadata() []Fragment_metadata {
 		}
 	}
 
-	// Sort by start time
-	for i := 0; i < len(metadata)-1; i++ {
-		for j := i + 1; j < len(metadata); j++ {
-			if metadata[i].StartTime > metadata[j].StartTime {
-				metadata[i], metadata[j] = metadata[j], metadata[i]
-			}
-		}
-	}
+	sort.Slice(metadata, func(i, j int) bool {
+		return metadata[i].StartTime < metadata[j].StartTime
+	})
 
 	return metadata
 }
@@ -235,13 +245,9 @@ func (tm *Tool_manager) ConcatenateAllFragments() (string, error) {
 		sortedFrags = append(sortedFrags, sortableFragment{id: id, fragment: frag})
 	}
 
-	for i := 0; i < len(sortedFrags)-1; i++ {
-		for j := i + 1; j < len(sortedFrags); j++ {
-			if sortedFrags[i].fragment.StartTime > sortedFrags[j].fragment.StartTime {
-				sortedFrags[i], sortedFrags[j] = sortedFrags[j], sortedFrags[i]
-			}
-		}
-	}
+	sort.Slice(sortedFrags, func(i, j int) bool {
+		return sortedFrags[i].fragment.StartTime < sortedFrags[j].fragment.StartTime
+	})
 
 	totalPoints := 0
 	for _, sf := range sortedFrags {
@@ -277,8 +283,13 @@ func (tm *Tool_manager) ConcatenateAllFragments() (string, error) {
 			defer wg.Done()
 			channelValues := make([]float64, 0, totalPoints)
 			for _, sf := range sortedFrags {
-				if channel, exists := sf.fragment.Channels[chName]; exists {
+				if channel, exists := sf.fragment.Channels[chName]; exists && len(channel.Values) == len(sf.fragment.TimeStamps) {
 					channelValues = append(channelValues, channel.Values...)
+				} else {
+					// Pad with NaN to keep channel length aligned with TimeStamps.
+					for i := 0; i < len(sf.fragment.TimeStamps); i++ {
+						channelValues = append(channelValues, math.NaN())
+					}
 				}
 			}
 			concatenated.Channels[chName].Values = channelValues

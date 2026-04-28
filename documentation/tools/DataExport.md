@@ -13,8 +13,7 @@ Export telemetry data from a fragment to a CSV file for use in external tools (M
 
 1. On the Tools page, select the fragment you want to export.
 2. Open the **Data Export** tool.
-3. In the channel list, check the channels you want to include. All channels are selected by default.
-4. Click **Export** and choose a save location and filename.
+3. Click **Save as CSV** and choose a save location and filename.
 
 ---
 
@@ -24,14 +23,6 @@ Export telemetry data from a fragment to a CSV file for use in external tools (M
 - The header contains each channel name followed by its unit in parentheses (e.g., `Speed (mph)`, `RPM (rpm)`).
 - Each subsequent row represents one time sample at the fragment's full data resolution — no down-sampling is applied.
 - The first column is always the **Time** channel (seconds).
-
----
-
-## Channel Selection
-
-- Use the checkboxes to include or exclude individual channels.
-- **Select All / Deselect All** buttons are available to toggle all channels at once.
-- Only channels present in the selected fragment appear in the list.
 
 ---
 

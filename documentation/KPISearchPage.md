@@ -17,7 +17,7 @@ Tag filters narrow which files are searched. Each tag category (Car, Test, Track
 - The **matching file count** updates live as you change filters.
 - Only files with `.MRTF` format in the local data cache are searchable.
 
-Tags are assigned to files during import (Data Entry page) or later via the File Manager's tag panel.
+Tags are assigned to files via the File Manager — select a `.MRTF` file in the local pane and use the tag panel that appears at the bottom.
 
 ---
 

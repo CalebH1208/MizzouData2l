@@ -50,6 +50,7 @@ const DataEntryPage: React.FC = () => {
   const [allPresets, setAllPresets] = useState<Backend.Channel_preset[]>([]);
   const [presetsApplied, setPresetsApplied] = useState<Set<string>>(new Set());
   const [skippedChannels, setSkippedChannels] = useState<Set<string>>(new Set());
+  const [isValidating, setIsValidating] = useState<boolean>(false);
 
   // Load channel data when component mounts or after successful data loading
   const loadChannelData = async () => {
@@ -121,6 +122,9 @@ const DataEntryPage: React.FC = () => {
   };
 
   const startValidatingData = async () => {
+    if (isValidating) {
+      return;
+    }
     const nameElement = document.getElementById("name_box");
     var newName = "you suck";
     if (nameElement) {
@@ -139,6 +143,7 @@ const DataEntryPage: React.FC = () => {
     }
     LogPrint(newName + " || path: " + newPath);
     SetName(newName);
+    setIsValidating(true);
     try {
       await Load_telemetry_file(newPath);
       setPopupMessage("Data Parsed!");
@@ -161,6 +166,8 @@ const DataEntryPage: React.FC = () => {
       setPopupMessage("Error Parsing data, are you sure all the files exist in this directory?");
       setPopupBg("#ff0000ff");
       setShowPopup(true);
+    } finally {
+      setIsValidating(false);
     }
 
   }
@@ -614,6 +621,7 @@ const DataEntryPage: React.FC = () => {
 
         <button
           onClick={startValidatingData}
+          disabled={isValidating}
           style={{
             backgroundColor: '#000000',
             color: 'white',
@@ -622,15 +630,16 @@ const DataEntryPage: React.FC = () => {
             padding: '6px 12px',
             fontSize: '13px',
             fontWeight: 'bold',
-            cursor: 'pointer',
+            cursor: isValidating ? 'not-allowed' : 'pointer',
+            opacity: isValidating ? 0.6 : 1,
             transition: 'all 0.3s ease',
             flexShrink: 0,
             whiteSpace: 'nowrap'
           }}
-          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F1B82D'}
-          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#000000'}
+          onMouseEnter={(e) => { if (!isValidating) e.currentTarget.style.backgroundColor = '#F1B82D'; }}
+          onMouseLeave={(e) => { if (!isValidating) e.currentTarget.style.backgroundColor = '#000000'; }}
         >
-          Start Validating Data
+          {isValidating ? 'Validating...' : 'Start Validating Data'}
         </button>
       </div>
 

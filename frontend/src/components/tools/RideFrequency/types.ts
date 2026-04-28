@@ -10,23 +10,34 @@ export interface ChannelFFTResult {
   amplitudes: number[];
   dominantHz: number;
   dominantAmp: number;
+  rideFrequencyHz: number;
+  rideFrequencyAmp: number;
+  wheelHopHz: number;
+  wheelHopAmp: number;
 }
 
-export interface RideFrequencySpeedResult {
-  targetSpeed: number;
-  actualSpeed: number;
-  sampleCount: number;
+export interface RideFrequencyResult {
   sampleRate: number;
-  channelResults: ChannelFFTResult[];
+  sampleCount: number;
+  maxFreqHz: number;
+  highpassHz: number;
+  detrend: boolean;
+  rideBandMin: number;
+  rideBandMax: number;
+  wheelHopBandMin: number;
+  wheelHopBandMax: number;
+  segmentLength: number;
+  method: string;
+  channels: ChannelFFTResult[];
 }
 
-export interface RideFrequencyPreset {
-  name: string;
-  speedChannel: string;
-  analysisChannels: string[];
-  targetSpeeds: string;
-  speedTolerance: number;
-  speedGradThreshold: number;
-  minPoints: number;
-  maxFreqHz: number;
-}
+export const CHANNEL_COLORS = [
+  '#3b82f6',
+  '#f97316',
+  '#4ade80',
+  '#ff00ff',
+  '#facc15',
+  '#22d3ee',
+  '#fb7185',
+  '#e879f9',
+];

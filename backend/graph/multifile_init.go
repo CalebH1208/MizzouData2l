@@ -170,16 +170,16 @@ func (fg *Full_graph) initializeFromMultipleFilesInternal(filePaths []string) ([
 	fmt.Printf("[InitializeFromMultipleFiles] Unified timeline built successfully\n")
 
 	fmt.Printf("[InitializeFromMultipleFiles] Building merged stored_file_manager with %d unique channels...\n", len(allChannels))
-	mergedBTF := Backend.New_BTF(nil)
-	mergedBTF.Name = fg.stored_file_manager.Name
-	mergedBTF.Tags = []string{"multi-file-merged"}
-	mergedBTF.Channels = make(map[string]types.Stored_channel, len(allChannels)+1)
-	mergedBTF.Notes = fg.stored_file_manager.Notes
-	mergedBTF.OriginalChannels = fg.stored_file_manager.OriginalChannels
+	sfm := fg.stored_file_manager
+	sfm.Tags = []string{"multi-file-merged"}
+	sfm.Channels = make(map[string]types.Stored_channel, len(allChannels)+1)
+	sfm.DeletedSegments = nil
+	sfm.ChangeLog = nil
+	sfm.TimeMutations = nil
 
 	timeStampCopy := make([]float64, totalPoints)
 	copy(timeStampCopy, fg.FullTimeStamps)
-	mergedBTF.Channels["Time"] = types.Stored_channel{Unit: "s", Conv: 1.0, Data: timeStampCopy}
+	sfm.Channels["Time"] = types.Stored_channel{Unit: "s", Conv: 1.0, Data: timeStampCopy}
 
 	for chName, canonicalUnit := range allChannels {
 		mergedData := make([]float64, totalPoints)
@@ -196,11 +196,11 @@ func (fg *Full_graph) initializeFromMultipleFilesInternal(filePaths []string) ([
 				chIdx += segment.DataPointCount
 			}
 		}
-		mergedBTF.Channels[chName] = types.Stored_channel{Unit: canonicalUnit, Conv: 1.0, Data: mergedData}
+		sfm.Channels[chName] = types.Stored_channel{Unit: canonicalUnit, Conv: 1.0, Data: mergedData}
 	}
-	fg.stored_file_manager = mergedBTF
 	fmt.Printf("[InitializeFromMultipleFiles] Merged stored_file_manager built successfully\n")
 
+	fg.ViewableChannels = make(map[string]*Data_channel, len(allChannels))
 	for name, storedChannel := range fg.stored_file_manager.Channels {
 		if name == "Time" {
 			continue

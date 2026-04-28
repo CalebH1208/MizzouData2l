@@ -22,12 +22,25 @@ export const ScatterChart = forwardRef<SVGSVGElement, ScatterChartProps>(({
   const dragStart = useRef<{ x: number; y: number } | null>(null);
   const dragRect = useRef<SVGRectElement | null>(null);
   const [hoveredPoint, setHoveredPoint] = useState<ScatterPoint | null>(null);
+  const [hoveredFit, setHoveredFit] = useState<{ x: number; y: number; px: number; py: number } | null>(null);
+  const [pinnedFit, setPinnedFit] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (result && result.data) {
+      setHoveredFit(null);
       renderScatterPlot();
     }
-  }, [result, zoomStack, boundsConfig]);
+  }, [result, zoomStack, boundsConfig, pinnedFit]);
+
+  useEffect(() => {
+    if (!boundsConfig.enabled || !boundsConfig.bestFit) {
+      setPinnedFit(null);
+    }
+  }, [boundsConfig.enabled, boundsConfig.bestFit]);
+
+  useEffect(() => {
+    setPinnedFit(null);
+  }, [result]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -77,25 +90,34 @@ export const ScatterChart = forwardRef<SVGSVGElement, ScatterChartProps>(({
       yRange = [yRange[0] - yPadding, yRange[1] + yPadding];
     }
 
+    const parseBound = (raw: string, fallback: number): number => {
+      if (raw === '') return fallback;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : fallback;
+    };
+
     if (boundsConfig.enabled) {
-      if (boundsConfig.xMin !== '') {
-        xRange[0] = Number(boundsConfig.xMin);
+      const newXMin = parseBound(boundsConfig.xMin, xRange[0]);
+      const newXMax = parseBound(boundsConfig.xMax, xRange[1]);
+      if (newXMin < newXMax) {
+        xRange = [newXMin, newXMax];
       }
-      if (boundsConfig.xMax !== '') {
-        xRange[1] = Number(boundsConfig.xMax);
-      }
-      if (boundsConfig.yMin !== '') {
-        yRange[0] = Number(boundsConfig.yMin);
-      }
-      if (boundsConfig.yMax !== '') {
-        yRange[1] = Number(boundsConfig.yMax);
+
+      const newYMin = parseBound(boundsConfig.yMin, yRange[0]);
+      const newYMax = parseBound(boundsConfig.yMax, yRange[1]);
+      if (newYMin < newYMax) {
+        yRange = [newYMin, newYMax];
       }
 
       if (metadata.hasColor) {
         const autoColorRange = metadata.colorRange as number[];
-        const colorMin = boundsConfig.colorMin !== '' ? Number(boundsConfig.colorMin) : autoColorRange[0];
-        const colorMax = boundsConfig.colorMax !== '' ? Number(boundsConfig.colorMax) : autoColorRange[1];
-        colorRange = [colorMin, colorMax];
+        const colorMin = parseBound(boundsConfig.colorMin, autoColorRange[0]);
+        const colorMax = parseBound(boundsConfig.colorMax, autoColorRange[1]);
+        if (colorMin < colorMax) {
+          colorRange = [colorMin, colorMax];
+        } else {
+          colorRange = [autoColorRange[0], autoColorRange[1]];
+        }
       }
     }
 
@@ -283,6 +305,147 @@ export const ScatterChart = forwardRef<SVGSVGElement, ScatterChartProps>(({
       circles.style('pointer-events', 'none');
     }
 
+    if (boundsConfig.enabled && boundsConfig.bestFit) {
+      let n = 0;
+      let sumX = 0;
+      let sumY = 0;
+      let sumXX = 0;
+      let sumYY = 0;
+      let sumXY = 0;
+      for (const p of data) {
+        if (p.x < xRange[0] || p.x > xRange[1]) continue;
+        if (p.y < yRange[0] || p.y > yRange[1]) continue;
+        n++;
+        sumX += p.x;
+        sumY += p.y;
+        sumXX += p.x * p.x;
+        sumYY += p.y * p.y;
+        sumXY += p.x * p.y;
+      }
+
+      const denom = n * sumXX - sumX * sumX;
+      if (n >= 2 && denom !== 0) {
+        const slope = (n * sumXY - sumX * sumY) / denom;
+        const intercept = (sumY - slope * sumX) / n;
+        const yDenom = n * sumYY - sumY * sumY;
+        const numerator = n * sumXY - sumX * sumY;
+        const r2 = yDenom > 0 ? (numerator * numerator) / (denom * yDenom) : 1;
+
+        const lineGroup = g.append('g').attr('clip-path', 'url(#plot-clip)');
+        const x1p = xScale(xRange[0]);
+        const y1p = yScale(slope * xRange[0] + intercept);
+        const x2p = xScale(xRange[1]);
+        const y2p = yScale(slope * xRange[1] + intercept);
+
+        lineGroup.append('line')
+          .attr('x1', x1p)
+          .attr('y1', y1p)
+          .attr('x2', x2p)
+          .attr('y2', y2p)
+          .attr('stroke', '#ff0000')
+          .attr('stroke-width', 2.5)
+          .attr('pointer-events', 'none');
+
+        lineGroup.append('line')
+          .attr('x1', x1p)
+          .attr('y1', y1p)
+          .attr('x2', x2p)
+          .attr('y2', y2p)
+          .attr('stroke', 'transparent')
+          .attr('stroke-width', 10)
+          .style('cursor', 'crosshair')
+          .on('mousemove', function(event) {
+            if (isDragging.current) return;
+            const [mx] = d3.pointer(event, g.node());
+            const dataX = xScale.invert(mx);
+            const clampedX = Math.min(Math.max(dataX, xRange[0]), xRange[1]);
+            const dataY = slope * clampedX + intercept;
+            setHoveredFit({
+              x: clampedX,
+              y: dataY,
+              px: xScale(clampedX) + margin.left,
+              py: yScale(dataY) + margin.top,
+            });
+          })
+          .on('mouseleave', function() {
+            setHoveredFit(null);
+          })
+          .on('click', function(event) {
+            event.stopPropagation();
+            const [mx] = d3.pointer(event, g.node());
+            const dataX = xScale.invert(mx);
+            const clampedX = Math.min(Math.max(dataX, xRange[0]), xRange[1]);
+            const dataY = slope * clampedX + intercept;
+            setPinnedFit({ x: clampedX, y: dataY });
+          });
+
+        if (pinnedFit) {
+          const pinPx = xScale(pinnedFit.x);
+          const pinPy = yScale(pinnedFit.y);
+
+          const pinGroup = g.append('g').attr('clip-path', 'url(#plot-clip)');
+          pinGroup.append('circle')
+            .attr('cx', pinPx)
+            .attr('cy', pinPy)
+            .attr('r', 5)
+            .attr('fill', '#ff0000')
+            .attr('stroke', '#fff')
+            .attr('stroke-width', 1.5)
+            .style('cursor', 'pointer')
+            .on('click', function(event) {
+              event.stopPropagation();
+              setPinnedFit(null);
+            });
+
+          const xLabel = `${metadata.xChannel}: ${pinnedFit.x.toFixed(3)} ${metadata.xUnit}`;
+          const yLabel = `${metadata.yChannel}: ${pinnedFit.y.toFixed(3)} ${metadata.yUnit}`;
+          const labelWidth = Math.max(xLabel.length, yLabel.length) * 6.5 + 16;
+          const labelHeight = 38;
+          const flipX = pinPx + 12 + labelWidth > plotWidth;
+          const labelX = flipX ? pinPx - 12 - labelWidth : pinPx + 12;
+          const labelY = Math.min(Math.max(pinPy - labelHeight / 2, 0), plotHeight - labelHeight);
+
+          const labelGroup = g.append('g');
+          labelGroup.append('rect')
+            .attr('x', labelX)
+            .attr('y', labelY)
+            .attr('width', labelWidth)
+            .attr('height', labelHeight)
+            .attr('fill', '#1a1a1a')
+            .attr('stroke', '#ff0000')
+            .attr('stroke-width', 1.5)
+            .attr('rx', 4);
+
+          labelGroup.append('text')
+            .attr('x', labelX + 8)
+            .attr('y', labelY + 15)
+            .attr('fill', '#fff')
+            .attr('font-family', 'Arial, sans-serif')
+            .attr('font-size', '11px')
+            .text(xLabel);
+
+          labelGroup.append('text')
+            .attr('x', labelX + 8)
+            .attr('y', labelY + 30)
+            .attr('fill', '#fff')
+            .attr('font-family', 'Arial, sans-serif')
+            .attr('font-size', '11px')
+            .text(yLabel);
+        }
+
+        const sign = intercept >= 0 ? '+' : '-';
+        g.append('text')
+          .attr('x', plotWidth - 8)
+          .attr('y', 14)
+          .attr('fill', '#ff0000')
+          .attr('text-anchor', 'end')
+          .attr('font-family', 'Arial, sans-serif')
+          .attr('font-size', '12px')
+          .attr('font-weight', 'bold')
+          .text(`y = ${slope.toFixed(4)}x ${sign} ${Math.abs(intercept).toFixed(4)}  (R²=${r2.toFixed(4)}, n=${n})`);
+      }
+    }
+
     overlay.on('mousedown', function(event) {
       const [x, y] = d3.pointer(event);
       isDragging.current = true;
@@ -393,6 +556,48 @@ export const ScatterChart = forwardRef<SVGSVGElement, ScatterChartProps>(({
             <div><strong>{(result.metadata as any).colorChannel}:</strong> {hoveredPoint.color.toFixed(3)} {(result.metadata as any).colorUnit}</div>
           )}
         </div>
+      )}
+
+      {hoveredFit && result && result.metadata && (
+        <>
+          <div
+            style={{
+              position: 'absolute',
+              left: `${hoveredFit.px - 4}px`,
+              top: `${hoveredFit.py - 4}px`,
+              width: '8px',
+              height: '8px',
+              borderRadius: '50%',
+              backgroundColor: '#ff0000',
+              border: '1px solid #fff',
+              pointerEvents: 'none',
+              zIndex: 999,
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute',
+              left: `${hoveredFit.px + 12}px`,
+              top: `${hoveredFit.py + 12}px`,
+              backgroundColor: '#1a1a1a',
+              border: '2px solid #ff0000',
+              borderRadius: '6px',
+              padding: '6px 10px',
+              color: '#fff',
+              fontSize: '11px',
+              pointerEvents: 'none',
+              zIndex: 1000,
+              boxShadow: '0 4px 6px rgba(0,0,0,0.3)',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <div style={{ marginBottom: '2px', color: '#ff0000', fontWeight: 'bold' }}>
+              Best Fit
+            </div>
+            <div><strong>{(result.metadata as any).xChannel}:</strong> {hoveredFit.x.toFixed(3)} {(result.metadata as any).xUnit}</div>
+            <div><strong>{(result.metadata as any).yChannel}:</strong> {hoveredFit.y.toFixed(3)} {(result.metadata as any).yUnit}</div>
+          </div>
+        </>
       )}
 
       {result && result.metadata && (result.metadata as any).pointCount > 20000 && (

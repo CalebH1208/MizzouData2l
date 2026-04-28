@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"sync"
+
+	"gonum.org/v1/gonum/dsp/fourier"
 )
 
 type RideFrequencyTool struct{}
@@ -18,83 +21,34 @@ func (t *RideFrequencyTool) GetName() string {
 }
 
 func (t *RideFrequencyTool) GetDescription() string {
-	return "Ride Frequency Analyzer - Computes FFT power spectra from suspension/inertial channels at target speeds to identify ride frequencies. Channels: vertical accel, pitch/roll rate, suspension pots."
+	return "Ride & wheel-hop frequency analysis via Welch PSD with detrend + high-pass filter."
 }
 
 type ChannelFFTResult struct {
-	ChannelName string    `json:"channelName"`
-	Frequencies []float64 `json:"frequencies"`
-	Amplitudes  []float64 `json:"amplitudes"`
-	DominantHz  float64   `json:"dominantHz"`
-	DominantAmp float64   `json:"dominantAmp"`
+	ChannelName      string    `json:"channelName"`
+	Frequencies      []float64 `json:"frequencies"`
+	Amplitudes       []float64 `json:"amplitudes"`
+	DominantHz       float64   `json:"dominantHz"`
+	DominantAmp      float64   `json:"dominantAmp"`
+	RideFrequencyHz  float64   `json:"rideFrequencyHz"`
+	RideFrequencyAmp float64   `json:"rideFrequencyAmp"`
+	WheelHopHz       float64   `json:"wheelHopHz"`
+	WheelHopAmp      float64   `json:"wheelHopAmp"`
 }
 
-type RideFrequencySpeedResult struct {
-	TargetSpeed    float64            `json:"targetSpeed"`
-	ActualSpeed    float64            `json:"actualSpeed"`
-	SampleCount    int                `json:"sampleCount"`
-	SampleRate     float64            `json:"sampleRate"`
-	ChannelResults []ChannelFFTResult `json:"channelResults"`
-}
-
-type RideFrequencyTimeSeries struct {
-	Times         []float64            `json:"times"`
-	Speeds        []float64            `json:"speeds"`
-	IsSteadyState []bool               `json:"isSteadyState"`
-	Channels      map[string][]float64 `json:"channels"`
-}
-
-type rideFreqSteadyBlock struct {
-	StartIdx int
-	EndIdx   int
-}
-
-func findRideFreqSteadyBlocks(
-	speeds []float64,
-	targetSpeed float64,
-	speedTol float64,
-	speedGradTol float64,
-	minPoints int,
-) []rideFreqSteadyBlock {
-	if len(speeds) == 0 {
-		return nil
-	}
-
-	speedGrad := make([]float64, len(speeds))
-	speedGrad[0] = 0
-	for i := 1; i < len(speeds); i++ {
-		speedGrad[i] = math.Abs(speeds[i] - speeds[i-1])
-	}
-
-	steadyIndices := make([]int, 0)
-	for i := 0; i < len(speeds); i++ {
-		if math.Abs(speeds[i]-targetSpeed) < speedTol && speedGrad[i] < speedGradTol {
-			steadyIndices = append(steadyIndices, i)
-		}
-	}
-
-	if len(steadyIndices) == 0 {
-		return nil
-	}
-
-	blocks := make([]rideFreqSteadyBlock, 0)
-	current := rideFreqSteadyBlock{StartIdx: steadyIndices[0]}
-
-	for i := 1; i < len(steadyIndices); i++ {
-		if steadyIndices[i]-steadyIndices[i-1] > 1 {
-			current.EndIdx = steadyIndices[i-1]
-			if current.EndIdx-current.StartIdx+1 >= minPoints {
-				blocks = append(blocks, current)
-			}
-			current = rideFreqSteadyBlock{StartIdx: steadyIndices[i]}
-		}
-	}
-	current.EndIdx = steadyIndices[len(steadyIndices)-1]
-	if current.EndIdx-current.StartIdx+1 >= minPoints {
-		blocks = append(blocks, current)
-	}
-
-	return blocks
+type RideFrequencyResult struct {
+	SampleRate       float64            `json:"sampleRate"`
+	SampleCount      int                `json:"sampleCount"`
+	MaxFreqHz        float64            `json:"maxFreqHz"`
+	HighpassHz       float64            `json:"highpassHz"`
+	Detrend          bool               `json:"detrend"`
+	RideBandMin      float64            `json:"rideBandMin"`
+	RideBandMax      float64            `json:"rideBandMax"`
+	WheelHopBandMin  float64            `json:"wheelHopBandMin"`
+	WheelHopBandMax  float64            `json:"wheelHopBandMax"`
+	SegmentLength    int                `json:"segmentLength"`
+	Method           string             `json:"method"`
+	Channels         []ChannelFFTResult `json:"channels"`
 }
 
 func computeSampleRate(timestamps []float64) float64 {
@@ -115,87 +69,361 @@ func computeSampleRate(timestamps []float64) float64 {
 	return 1.0 / median
 }
 
-func computeFFT(samples []float64, sampleRate float64, maxFreqHz float64) (freqs []float64, amps []float64) {
-	n := len(samples)
-	if n == 0 {
-		return nil, nil
+func rollingAverage(data []float64, window int) []float64 {
+	if window <= 1 {
+		return data
 	}
-
-	// Apply Hann window
-	windowed := make([]float64, n)
-	for i := 0; i < n; i++ {
-		w := 0.5 * (1.0 - math.Cos(2.0*math.Pi*float64(i)/float64(n-1)))
-		windowed[i] = samples[i] * w
-	}
-
-	// DFT — compute only up to Nyquist (n/2 bins)
-	halfN := n / 2
-	realPart := make([]float64, halfN)
-	imagPart := make([]float64, halfN)
-
-	for k := 0; k < halfN; k++ {
-		re := 0.0
-		im := 0.0
-		angle := 2.0 * math.Pi * float64(k) / float64(n)
-		for j := 0; j < n; j++ {
-			re += windowed[j] * math.Cos(angle*float64(j))
-			im -= windowed[j] * math.Sin(angle*float64(j))
+	out := make([]float64, len(data))
+	half := window / 2
+	for i := 0; i < len(data); i++ {
+		start := i - half
+		if start < 0 {
+			start = 0
 		}
-		realPart[k] = re
-		imagPart[k] = im
-	}
-
-	freqs = make([]float64, 0, halfN)
-	amps = make([]float64, 0, halfN)
-
-	for k := 0; k < halfN; k++ {
-		freq := float64(k) * sampleRate / float64(n)
-		if freq > maxFreqHz {
-			break
+		end := i + half + 1
+		if end > len(data) {
+			end = len(data)
 		}
-		mag := math.Sqrt(realPart[k]*realPart[k]+imagPart[k]*imagPart[k]) * 2.0 / float64(n)
-		if k == 0 {
-			mag /= 2.0 // DC term not doubled
+		sum := 0.0
+		count := 0
+		for j := start; j < end; j++ {
+			if !math.IsNaN(data[j]) && !math.IsInf(data[j], 0) {
+				sum += data[j]
+				count++
+			}
 		}
-		freqs = append(freqs, freq)
-		amps = append(amps, mag)
+		if count > 0 {
+			out[i] = sum / float64(count)
+		} else {
+			out[i] = data[i]
+		}
 	}
-
-	return freqs, amps
+	return out
 }
 
-func computeChannelFFT(channelName string, samples []float64, sampleRate float64, maxFreqHz float64) ChannelFFTResult {
-	freqs, amps := computeFFT(samples, sampleRate, maxFreqHz)
-
-	result := ChannelFFTResult{
-		ChannelName: channelName,
-		Frequencies: freqs,
-		Amplitudes:  amps,
-	}
-
-	// Find dominant frequency (skip DC bin at k=0)
-	dominantIdx := -1
-	dominantAmp := -1.0
-	for i := 1; i < len(amps); i++ {
-		if amps[i] > dominantAmp {
-			dominantAmp = amps[i]
-			dominantIdx = i
+func sanitize(samples []float64) []float64 {
+	out := make([]float64, len(samples))
+	lastGood := 0.0
+	haveGood := false
+	for i, v := range samples {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			if haveGood {
+				out[i] = lastGood
+			} else {
+				out[i] = 0
+			}
+		} else {
+			out[i] = v
+			lastGood = v
+			haveGood = true
 		}
 	}
-	if dominantIdx >= 0 {
-		result.DominantHz = freqs[dominantIdx]
-		result.DominantAmp = dominantAmp
+	return out
+}
+
+func linearDetrend(samples []float64) []float64 {
+	n := len(samples)
+	if n < 2 {
+		out := make([]float64, n)
+		copy(out, samples)
+		return out
+	}
+	var sumX, sumY, sumXY, sumXX float64
+	for i, y := range samples {
+		x := float64(i)
+		sumX += x
+		sumY += y
+		sumXY += x * y
+		sumXX += x * x
+	}
+	nf := float64(n)
+	denom := nf*sumXX - sumX*sumX
+	if denom == 0 {
+		out := make([]float64, n)
+		copy(out, samples)
+		return out
+	}
+	slope := (nf*sumXY - sumX*sumY) / denom
+	intercept := (sumY - slope*sumX) / nf
+	out := make([]float64, n)
+	for i, y := range samples {
+		out[i] = y - (slope*float64(i) + intercept)
+	}
+	return out
+}
+
+type biquad struct {
+	b0, b1, b2, a1, a2 float64
+}
+
+func highpassBiquad(fs, cutoff float64) biquad {
+	q := math.Sqrt(2.0) / 2.0
+	w0 := 2.0 * math.Pi * cutoff / fs
+	cosW := math.Cos(w0)
+	sinW := math.Sin(w0)
+	alpha := sinW / (2.0 * q)
+	a0 := 1.0 + alpha
+	return biquad{
+		b0: (1.0 + cosW) / 2.0 / a0,
+		b1: -(1.0 + cosW) / a0,
+		b2: (1.0 + cosW) / 2.0 / a0,
+		a1: -2.0 * cosW / a0,
+		a2: (1.0 - alpha) / a0,
+	}
+}
+
+func (bq biquad) apply(x []float64) []float64 {
+	out := make([]float64, len(x))
+	var x1, x2, y1, y2 float64
+	for i, xi := range x {
+		y := bq.b0*xi + bq.b1*x1 + bq.b2*x2 - bq.a1*y1 - bq.a2*y2
+		out[i] = y
+		x2 = x1
+		x1 = xi
+		y2 = y1
+		y1 = y
+	}
+	return out
+}
+
+func reverseInPlace(x []float64) {
+	for i, j := 0, len(x)-1; i < j; i, j = i+1, j-1 {
+		x[i], x[j] = x[j], x[i]
+	}
+}
+
+func butterworthHighpass(samples []float64, fs, cutoff float64) []float64 {
+	if cutoff <= 0 || fs <= 0 || cutoff >= fs/2 {
+		out := make([]float64, len(samples))
+		copy(out, samples)
+		return out
+	}
+	bq := highpassBiquad(fs, cutoff)
+	fwd := bq.apply(samples)
+	reverseInPlace(fwd)
+	rev := bq.apply(fwd)
+	reverseInPlace(rev)
+	return rev
+}
+
+func nextPow2(n int) int {
+	if n <= 1 {
+		return 1
+	}
+	p := 1
+	for p < n {
+		p <<= 1
+	}
+	return p
+}
+
+func hannWindow(n int) []float64 {
+	w := make([]float64, n)
+	if n == 1 {
+		w[0] = 1
+		return w
+	}
+	for i := 0; i < n; i++ {
+		w[i] = 0.5 * (1.0 - math.Cos(2.0*math.Pi*float64(i)/float64(n-1)))
+	}
+	return w
+}
+
+func welchPSD(samples []float64, fs float64, segLen int) (freqs, psd []float64, method string) {
+	n := len(samples)
+	if n == 0 || fs <= 0 {
+		return nil, nil, "empty"
 	}
 
-	return result
+	if segLen > n {
+		segLen = n
+	}
+	if segLen < 8 {
+		segLen = n
+	}
+
+	nfft := nextPow2(segLen)
+	window := hannWindow(segLen)
+	winPower := 0.0
+	for _, w := range window {
+		winPower += w * w
+	}
+	if winPower == 0 {
+		winPower = 1
+	}
+
+	halfN := nfft/2 + 1
+	freqs = make([]float64, halfN)
+	for k := 0; k < halfN; k++ {
+		freqs[k] = float64(k) * fs / float64(nfft)
+	}
+
+	fft := fourier.NewFFT(nfft)
+	buf := make([]float64, nfft)
+	accum := make([]float64, halfN)
+
+	step := segLen / 2
+	if step < 1 {
+		step = segLen
+	}
+	segments := 0
+
+	for start := 0; start+segLen <= n; start += step {
+		for i := 0; i < segLen; i++ {
+			buf[i] = samples[start+i] * window[i]
+		}
+		for i := segLen; i < nfft; i++ {
+			buf[i] = 0
+		}
+		coeffs := fft.Coefficients(nil, buf)
+		for k := 0; k < halfN; k++ {
+			re := real(coeffs[k])
+			im := imag(coeffs[k])
+			accum[k] += re*re + im*im
+		}
+		segments++
+	}
+
+	if segments == 0 {
+		for i := 0; i < segLen && i < n; i++ {
+			buf[i] = samples[i] * window[i]
+		}
+		for i := segLen; i < nfft; i++ {
+			buf[i] = 0
+		}
+		coeffs := fft.Coefficients(nil, buf)
+		for k := 0; k < halfN; k++ {
+			re := real(coeffs[k])
+			im := imag(coeffs[k])
+			accum[k] = re*re + im*im
+		}
+		segments = 1
+		method = "single"
+	} else {
+		method = "welch"
+	}
+
+	scale := 1.0 / (fs * winPower * float64(segments))
+	psd = make([]float64, halfN)
+	for k := 0; k < halfN; k++ {
+		v := accum[k] * scale
+		if k != 0 && k != halfN-1 {
+			v *= 2.0
+		}
+		psd[k] = v
+	}
+
+	return freqs, psd, method
+}
+
+func findPeakInBand(freqs, psd []float64, minHz, maxHz float64) (hz, amp float64) {
+	if len(freqs) == 0 || len(psd) != len(freqs) {
+		return 0, 0
+	}
+	if minHz < 0 {
+		minHz = 0
+	}
+	if maxHz <= minHz {
+		return 0, 0
+	}
+
+	bestIdx := -1
+	bestAmp := -1.0
+	for i, f := range freqs {
+		if f < minHz {
+			continue
+		}
+		if f > maxHz {
+			break
+		}
+		if psd[i] > bestAmp {
+			bestAmp = psd[i]
+			bestIdx = i
+		}
+	}
+	if bestIdx < 0 {
+		return 0, 0
+	}
+
+	if bestIdx > 0 && bestIdx < len(psd)-1 {
+		y0 := psd[bestIdx-1]
+		y1 := psd[bestIdx]
+		y2 := psd[bestIdx+1]
+		denom := y0 - 2*y1 + y2
+		if denom != 0 {
+			offset := 0.5 * (y0 - y2) / denom
+			if offset > -1 && offset < 1 {
+				df := freqs[bestIdx] - freqs[bestIdx-1]
+				hz = freqs[bestIdx] + offset*df
+				amp = y1 - 0.25*(y0-y2)*offset
+				return hz, amp
+			}
+		}
+	}
+	return freqs[bestIdx], bestAmp
+}
+
+type analyzeParams struct {
+	name         string
+	raw          []float64
+	fs           float64
+	smoothing    int
+	maxFreqHz    float64
+	highpassHz   float64
+	detrend      bool
+	rideMin      float64
+	rideMax      float64
+	hopMin       float64
+	hopMax       float64
+	segmentLen   int
+}
+
+func analyzeChannel(p analyzeParams) (ChannelFFTResult, string) {
+	samples := sanitize(p.raw)
+	if p.detrend {
+		samples = linearDetrend(samples)
+	}
+	if p.highpassHz > 0 {
+		samples = butterworthHighpass(samples, p.fs, p.highpassHz)
+	}
+	if p.smoothing > 1 {
+		samples = rollingAverage(samples, p.smoothing)
+	}
+
+	freqs, psd, method := welchPSD(samples, p.fs, p.segmentLen)
+
+	outFreqs := freqs
+	outPsd := psd
+	if p.maxFreqHz > 0 {
+		cut := len(freqs)
+		for i, f := range freqs {
+			if f > p.maxFreqHz {
+				cut = i
+				break
+			}
+		}
+		outFreqs = freqs[:cut]
+		outPsd = psd[:cut]
+	}
+
+	rideHz, rideAmp := findPeakInBand(freqs, psd, p.rideMin, p.rideMax)
+	hopHz, hopAmp := findPeakInBand(freqs, psd, p.hopMin, p.hopMax)
+
+	res := ChannelFFTResult{
+		ChannelName:      p.name,
+		Frequencies:      outFreqs,
+		Amplitudes:       outPsd,
+		RideFrequencyHz:  rideHz,
+		RideFrequencyAmp: rideAmp,
+		WheelHopHz:       hopHz,
+		WheelHopAmp:      hopAmp,
+		DominantHz:       rideHz,
+		DominantAmp:      rideAmp,
+	}
+	return res, method
 }
 
 func (t *RideFrequencyTool) Execute(fragment *Backend.Data_fragment, params map[string]interface{}) (*Backend.Tool_result, error) {
-	speedChannel, ok := params["speedChannel"].(string)
-	if !ok || speedChannel == "" {
-		return nil, fmt.Errorf("speedChannel parameter is required")
-	}
-
 	channelsRaw, ok := params["channels"].([]interface{})
 	if !ok || len(channelsRaw) == 0 {
 		return nil, fmt.Errorf("channels parameter is required (array of channel names)")
@@ -209,159 +437,124 @@ func (t *RideFrequencyTool) Execute(fragment *Backend.Data_fragment, params map[
 		channelNames[i] = s
 	}
 
-	targetSpeedsRaw, ok := params["targetSpeeds"].([]interface{})
-	if !ok || len(targetSpeedsRaw) == 0 {
-		return nil, fmt.Errorf("targetSpeeds parameter is required")
-	}
-	targetSpeeds := make([]float64, len(targetSpeedsRaw))
-	for i, v := range targetSpeedsRaw {
-		targetSpeeds[i], ok = v.(float64)
-		if !ok {
-			return nil, fmt.Errorf("targetSpeeds must be an array of numbers")
-		}
+	smoothing := 1
+	if v, ok := params["smoothing"].(float64); ok && v >= 1 {
+		smoothing = int(v)
 	}
 
-	speedTolerance, ok := params["speedTolerance"].(float64)
-	if !ok {
-		speedTolerance = 5.0
+	maxFreqHz := 25.0
+	if v, ok := params["maxFreqHz"].(float64); ok && v > 0 {
+		maxFreqHz = v
 	}
 
-	speedGradThreshold, ok := params["speedGradThreshold"].(float64)
-	if !ok {
-		speedGradThreshold = 5.0
+	highpassHz := 0.5
+	if v, ok := params["highpassHz"].(float64); ok && v >= 0 {
+		highpassHz = v
 	}
 
-	minPoints, ok := params["minPoints"].(float64)
-	if !ok {
-		minPoints = 100
-	}
-	minPointsInt := int(minPoints)
-
-	maxFreqHz, ok := params["maxFreqHz"].(float64)
-	if !ok {
-		maxFreqHz = 10.0
+	detrend := true
+	if v, ok := params["detrend"].(bool); ok {
+		detrend = v
 	}
 
-	speedChan, ok := fragment.Channels[speedChannel]
-	if !ok {
-		return nil, fmt.Errorf("speed channel '%s' not found in fragment", speedChannel)
+	rideMin := 1.0
+	if v, ok := params["rideMinHz"].(float64); ok && v >= 0 {
+		rideMin = v
 	}
-	speeds := speedChan.Values
+	rideMax := 5.0
+	if v, ok := params["rideMaxHz"].(float64); ok && v > rideMin {
+		rideMax = v
+	}
 
-	for _, chName := range channelNames {
-		if _, ok := fragment.Channels[chName]; !ok {
-			return nil, fmt.Errorf("channel '%s' not found in fragment", chName)
+	hopMin := 8.0
+	if v, ok := params["wheelHopMinHz"].(float64); ok && v >= 0 {
+		hopMin = v
+	}
+	hopMax := 20.0
+	if v, ok := params["wheelHopMaxHz"].(float64); ok && v > hopMin {
+		hopMax = v
+	}
+
+	for _, name := range channelNames {
+		if _, ok := fragment.Channels[name]; !ok {
+			return nil, fmt.Errorf("channel '%s' not found in fragment", name)
 		}
 	}
 
 	sampleRate := computeSampleRate(fragment.TimeStamps)
-	fmt.Printf("[RideFrequency] Sample rate: %.2f Hz, %d total points\n", sampleRate, len(fragment.TimeStamps))
+	sampleCount := len(fragment.TimeStamps)
 
-	// Build time-series data (full fragment)
-	tsChannels := make(map[string][]float64, len(channelNames))
-	for _, chName := range channelNames {
-		tsChannels[chName] = fragment.Channels[chName].Values
+	segmentLen := 1024
+	if v, ok := params["segmentLength"].(float64); ok && v >= 64 {
+		segmentLen = int(v)
+	}
+	if segmentLen > sampleCount {
+		segmentLen = sampleCount
 	}
 
-	isSteadyState := make([]bool, len(speeds))
-	for _, targetSpeed := range targetSpeeds {
-		blocks := findRideFreqSteadyBlocks(speeds, targetSpeed, speedTolerance, speedGradThreshold, 1)
-		for _, block := range blocks {
-			for i := block.StartIdx; i <= block.EndIdx; i++ {
-				isSteadyState[i] = true
-			}
-		}
+	results := make([]ChannelFFTResult, len(channelNames))
+	methods := make([]string, len(channelNames))
+	var wg sync.WaitGroup
+	for i, name := range channelNames {
+		wg.Add(1)
+		go func(idx int, chName string) {
+			defer wg.Done()
+			results[idx], methods[idx] = analyzeChannel(analyzeParams{
+				name:       chName,
+				raw:        fragment.Channels[chName].Values,
+				fs:         sampleRate,
+				smoothing:  smoothing,
+				maxFreqHz:  maxFreqHz,
+				highpassHz: highpassHz,
+				detrend:    detrend,
+				rideMin:    rideMin,
+				rideMax:    rideMax,
+				hopMin:     hopMin,
+				hopMax:     hopMax,
+				segmentLen: segmentLen,
+			})
+		}(i, name)
 	}
+	wg.Wait()
 
-	timeSeries := RideFrequencyTimeSeries{
-		Times:         fragment.TimeStamps,
-		Speeds:        speeds,
-		IsSteadyState: isSteadyState,
-		Channels:      tsChannels,
-	}
-
-	// Compute FFT per target speed
-	speedResults := make([]RideFrequencySpeedResult, 0, len(targetSpeeds))
-
-	for _, targetSpeed := range targetSpeeds {
-		blocks := findRideFreqSteadyBlocks(speeds, targetSpeed, speedTolerance, speedGradThreshold, minPointsInt)
-		if len(blocks) == 0 {
-			fmt.Printf("[RideFrequency] No steady-state blocks found for %.1f mph\n", targetSpeed)
-			continue
+	method := "welch"
+	for _, m := range methods {
+		if m == "single" {
+			method = "single"
+			break
 		}
-
-		// Concatenate samples from all blocks
-		totalSamples := 0
-		for _, block := range blocks {
-			totalSamples += block.EndIdx - block.StartIdx + 1
-		}
-
-		sumSpeed := 0.0
-		sampleCount := 0
-
-		channelSamples := make(map[string][]float64, len(channelNames))
-		for _, chName := range channelNames {
-			channelSamples[chName] = make([]float64, 0, totalSamples)
-		}
-
-		for _, block := range blocks {
-			for i := block.StartIdx; i <= block.EndIdx; i++ {
-				sumSpeed += speeds[i]
-				sampleCount++
-				for _, chName := range channelNames {
-					channelSamples[chName] = append(channelSamples[chName], fragment.Channels[chName].Values[i])
-				}
-			}
-		}
-
-		actualSpeed := sumSpeed / float64(sampleCount)
-		fmt.Printf("[RideFrequency] Target %.1f mph: %d samples across %d blocks, actual avg %.2f mph\n",
-			targetSpeed, sampleCount, len(blocks), actualSpeed)
-
-		channelResults := make([]ChannelFFTResult, 0, len(channelNames))
-		for _, chName := range channelNames {
-			samples := channelSamples[chName]
-			fftResult := computeChannelFFT(chName, samples, sampleRate, maxFreqHz)
-			channelResults = append(channelResults, fftResult)
-			fmt.Printf("[RideFrequency]   Channel '%s': dominant freq %.3f Hz (amp %.4f)\n",
-				chName, fftResult.DominantHz, fftResult.DominantAmp)
-		}
-
-		speedResults = append(speedResults, RideFrequencySpeedResult{
-			TargetSpeed:    targetSpeed,
-			ActualSpeed:    actualSpeed,
-			SampleCount:    sampleCount,
-			SampleRate:     sampleRate,
-			ChannelResults: channelResults,
-		})
-	}
-
-	if len(speedResults) == 0 {
-		return nil, fmt.Errorf("no steady-state conditions found for any target speed")
-	}
-
-	sort.Slice(speedResults, func(i, j int) bool {
-		return speedResults[i].TargetSpeed < speedResults[j].TargetSpeed
-	})
-
-	responseData := map[string]interface{}{
-		"speedResults": speedResults,
-		"timeSeries":   timeSeries,
-	}
-
-	metadata := map[string]interface{}{
-		"speedChannel":       speedChannel,
-		"channels":           channelNames,
-		"sampleRate":         sampleRate,
-		"maxFreqHz":          maxFreqHz,
-		"fragmentStartTime":  fragment.StartTime,
-		"fragmentEndTime":    fragment.EndTime,
 	}
 
 	return &Backend.Tool_result{
 		ToolName:   t.GetName(),
 		ResultType: "ride-frequency",
-		Data:       responseData,
-		Metadata:   metadata,
+		Data: RideFrequencyResult{
+			SampleRate:      sampleRate,
+			SampleCount:     sampleCount,
+			MaxFreqHz:       maxFreqHz,
+			HighpassHz:      highpassHz,
+			Detrend:         detrend,
+			RideBandMin:     rideMin,
+			RideBandMax:     rideMax,
+			WheelHopBandMin: hopMin,
+			WheelHopBandMax: hopMax,
+			SegmentLength:   segmentLen,
+			Method:          method,
+			Channels:        results,
+		},
+		Metadata: map[string]interface{}{
+			"channels":        channelNames,
+			"smoothing":       smoothing,
+			"sampleRate":      sampleRate,
+			"maxFreqHz":       maxFreqHz,
+			"highpassHz":      highpassHz,
+			"detrend":         detrend,
+			"rideBandMin":     rideMin,
+			"rideBandMax":     rideMax,
+			"wheelHopBandMin": hopMin,
+			"wheelHopBandMax": hopMax,
+			"segmentLength":   segmentLen,
+			"method":          method,
+		},
 	}, nil
 }

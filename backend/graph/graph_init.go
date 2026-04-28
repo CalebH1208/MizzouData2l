@@ -70,6 +70,9 @@ func (fg *Full_graph) InitializeFromStoredFile() error {
 	fg.RedoStack = make([]types.Change_op, 0)
 	fg.DeletedSegments = make([]types.Deleted_segment, 0)
 	fg.TimeMutations = make([]types.TimeMutation, 0)
+	fg.IsMultiFile = false
+	fg.FileMetadata = nil
+	fg.FileBoundaries = nil
 	fg.HasUnsavedChanges = false
 	debug.FreeOSMemory()
 	fmt.Println("[GraphAPI] Cleared previous graph state for new data load")
@@ -142,9 +145,10 @@ func (fg *Full_graph) InitializeFromStoredFile() error {
 	wg.Wait()
 	close(errChan)
 
-	// Check for errors
-	if err := <-errChan; err != nil {
-		return err
+	for err := range errChan {
+		if err != nil {
+			return err
+		}
 	}
 
 	fmt.Printf("[GraphAPI] Successfully loaded and initialized from stored file '%s'\n",

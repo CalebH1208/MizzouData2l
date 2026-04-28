@@ -506,9 +506,10 @@ func (fg *Full_graph) ExtractRawDataBetweenTimes(startTime, endTime float64) (*B
 	wg.Wait()
 	close(errChan)
 
-	// Check for errors
-	if err := <-errChan; err != nil {
-		return nil, err
+	for err := range errChan {
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Add Time as a channel for tool usage (e.g., plotting data vs time)

@@ -49,6 +49,7 @@ const ChannelManagerUnified: React.FC<ChannelManagerUnifiedProps> = ({
   const [missingChannelsConfirm, setMissingChannelsConfirm] = useState<{ preset: PresetManager.GraphPreset, missingChannels: string[] } | null>(null);
   const [deletePresetConfirm, setDeletePresetConfirm] = useState<PresetManager.GraphPreset | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [channelSearch, setChannelSearch] = useState('');
 
   useEffect(() => {
     loadData();
@@ -440,7 +441,9 @@ const ChannelManagerUnified: React.FC<ChannelManagerUnifiedProps> = ({
     }
   };
 
-  const allChannels = channels;
+  const allChannels = channelSearch.trim()
+    ? channels.filter(ch => ch.name.toLowerCase().includes(channelSearch.toLowerCase()))
+    : channels;
 
   return (
     <div style={styles.container}>
@@ -623,6 +626,18 @@ const ChannelManagerUnified: React.FC<ChannelManagerUnifiedProps> = ({
         <div style={styles.column}>
           <div style={styles.columnHeader}>
             <span style={styles.columnTitle}>CHANNELS ({allChannels.length})</span>
+          </div>
+          <div style={styles.channelSearchContainer}>
+            <input
+              type="text"
+              value={channelSearch}
+              onChange={(e) => setChannelSearch(e.target.value)}
+              placeholder="Search channels..."
+              style={styles.channelSearchInput}
+            />
+            {channelSearch && (
+              <button style={styles.channelSearchClear} onClick={() => setChannelSearch('')}>×</button>
+            )}
           </div>
           <div style={styles.columnContent}>
             {loading ? (
@@ -828,6 +843,37 @@ const styles: { [key: string]: React.CSSProperties } = {
     borderBottom: '2px solid #F1B82D',
     backgroundColor: '#1a1a1a',
     flexShrink: 0,
+  },
+  channelSearchContainer: {
+    position: 'relative' as const,
+    padding: '8px 12px',
+    borderBottom: '1px solid #444',
+    backgroundColor: '#1a1a1a',
+    flexShrink: 0,
+  },
+  channelSearchInput: {
+    width: '100%',
+    backgroundColor: '#2a2a2a',
+    color: 'white',
+    border: '1px solid #555',
+    borderRadius: '4px',
+    padding: '6px 28px 6px 8px',
+    fontSize: '12px',
+    boxSizing: 'border-box' as const,
+    outline: 'none',
+  },
+  channelSearchClear: {
+    position: 'absolute' as const,
+    right: '18px',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    background: 'none',
+    border: 'none',
+    color: '#aaa',
+    fontSize: '16px',
+    cursor: 'pointer',
+    padding: '0 2px',
+    lineHeight: 1,
   },
   columnTitle: {
     color: '#F1B82D',

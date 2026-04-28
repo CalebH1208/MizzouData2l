@@ -33,4 +33,5 @@ export interface BoundsConfig {
   colorMax: string;
   enabled: boolean;
   squared: boolean;
+  bestFit: boolean;
 }

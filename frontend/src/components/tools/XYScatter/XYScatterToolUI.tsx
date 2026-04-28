@@ -28,6 +28,7 @@ const XYScatterToolUI: React.FC<XYScatterToolUIProps> = ({ fragment }) => {
     colorMax: '',
     enabled: false,
     squared: false,
+    bestFit: false,
   });
 
   const svgRef = useRef<SVGSVGElement>(null);

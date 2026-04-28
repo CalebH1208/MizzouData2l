@@ -7,7 +7,9 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
+	"sync"
 
 	"MizzouDataTool/backend/types"
 )
@@ -48,69 +50,114 @@ func (file *Telemetry_file) SetStructuredTags(tags types.Structured_tags) {
 
 func (file *Telemetry_file) Load_telemetry_file(path string) error {
 	log.Print(path)
-	_, err := os.Stat(path + "\\fullData.csv")
-	if errors.Is(err, os.ErrNotExist) {
-		// Call Go implementation of data unification
-		err := ProcessDirectory(path)
+	cachePath := filepath.Join(path, "fullData.csv")
+
+	// If a cached fullData.csv exists, prefer the parallel CSV path so user
+	// doesn't pay the unification cost again. Otherwise build the unified
+	// data in memory directly — bypassing the CSV string round-trip entirely.
+	if _, err := os.Stat(cachePath); errors.Is(err, os.ErrNotExist) {
+		unified, err := processDirectoryInMemory(path)
 		if err != nil {
 			return fmt.Errorf("data unification failed: %w", err)
 		}
+		file.populateFromUnified(unified)
+
+		// Write the cache file in the background so re-loads are fast.
+		// Failures here don't affect the loaded data.
+		go func() {
+			_ = writeUnifiedCSV(cachePath, unified)
+		}()
+		return nil
+	} else if err != nil {
+		return err
 	}
-	csvData, err := os.Open(path + "\\fullData.csv")
+
+	return file.loadFromCSV(cachePath)
+}
+
+// populateFromUnified converts a column-major unifiedResult into Telemetry_channel
+// entries, applying the conversion=conv/precision factor in parallel per channel.
+func (file *Telemetry_file) populateFromUnified(u *unifiedResult) {
+	file.Channels = make([]Telemetry_channel, len(u.header.columns))
+
+	var wg sync.WaitGroup
+	wg.Add(len(u.header.columns))
+	for i := range u.header.columns {
+		go func(i int) {
+			defer wg.Done()
+			conv := parseConvFactor(u.header.conversion[i])
+			prec := parsePrecFactor(u.header.precision[i])
+			factor := float32(conv / prec)
+
+			src := u.values[i]
+			data := make([]float32, len(src))
+			for j, v := range src {
+				data[j] = float32(v) * factor
+			}
+			original := make([]float32, len(data))
+			copy(original, data)
+			file.Channels[i] = Telemetry_channel{
+				Name:         u.header.columns[i],
+				Unit:         u.header.units[i],
+				Conversion:   factor,
+				OriginalConv: factor,
+				Is_Validated: false,
+				Data:         data,
+				OriginalData: original,
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+// loadFromCSV is the legacy path used when fullData.csv already exists.
+// Parses the CSV once into column-major form and converts in parallel.
+func (file *Telemetry_file) loadFromCSV(cachePath string) error {
+	csvData, err := os.Open(cachePath)
 	if err != nil {
 		return err
 	}
 	defer csvData.Close()
-	file.Channels = []Telemetry_channel{}
 
 	reader := csv.NewReader(csvData)
+	reader.ReuseRecord = true
+	reader.FieldsPerRecord = -1 // tolerate variable-width rows
+
 	names, err := reader.Read()
 	if err != nil {
 		return err
 	}
+	namesCopy := make([]string, len(names))
+	copy(namesCopy, names)
+
 	units, err := reader.Read()
 	if err != nil {
 		return err
 	}
+	unitsCopy := make([]string, len(units))
+	copy(unitsCopy, units)
+
 	conv, err := reader.Read()
 	if err != nil {
 		return err
 	}
+	convCopy := make([]string, len(conv))
+	copy(convCopy, conv)
+
 	prec, err := reader.Read()
 	if err != nil {
 		return err
 	}
-	for i := range names {
-		// Handle empty conversion values
-		convStr := conv[i]
-		if convStr == "" {
-			convStr = "-7"
-		}
-		c, err := strconv.ParseFloat(convStr, 32)
-		if err != nil {
-			return fmt.Errorf("failed to parse conversion '%s' for channel '%s': %w", conv[i], names[i], err)
-		}
-		if c == -7 {
-			c = 1
-		}
+	precCopy := make([]string, len(prec))
+	copy(precCopy, prec)
 
-		// Handle empty precision values
-		precStr := prec[i]
-		if precStr == "" {
-			precStr = "32"
-		}
-		p, err := strconv.ParseFloat(precStr, 32)
-		if err != nil {
-			return fmt.Errorf("failed to parse precision '%s' for channel '%s': %w", prec[i], names[i], err)
-		}
-		if p == 32 {
-			p = 1
-		}
-		file.Channels = append(file.Channels, Telemetry_channel{names[i], units[i], float32(c / p), float32(c / p), false, false, []float32{}, []float32{}})
+	numCols := len(namesCopy)
+	rawCols := make([][]float32, numCols)
+	for j := range rawCols {
+		rawCols[j] = make([]float32, 0, 1024)
 	}
 
 	for {
-
 		record, err := reader.Read()
 		if err == io.EOF {
 			break
@@ -118,24 +165,76 @@ func (file *Telemetry_file) Load_telemetry_file(path string) error {
 		if err != nil {
 			return err
 		}
-		for i, val := range record {
-			// Handle empty values
-			if val == "" {
-				val = "0"
+		if len(record) < numCols {
+			continue
+		}
+		if len(record) > numCols {
+			record = record[:numCols]
+		}
+		for j := 0; j < numCols; j++ {
+			s := record[j]
+			if s == "" {
+				rawCols[j] = append(rawCols[j], 0)
+				continue
 			}
-			v, err := strconv.ParseFloat(val, 32)
+			v, err := strconv.ParseFloat(s, 32)
 			if err != nil {
-				return fmt.Errorf("failed to parse value '%s' for channel '%s' at row %d: %w", val, file.Channels[i].Name, len(file.Channels[i].Data), err)
+				return fmt.Errorf("failed to parse value '%s' for channel '%s' at row %d: %w", s, namesCopy[j], len(rawCols[j]), err)
 			}
-			file.Channels[i].Data = append(file.Channels[i].Data, float32(v)*file.Channels[i].Conversion)
+			rawCols[j] = append(rawCols[j], float32(v))
 		}
 	}
-	for i := range file.Channels {
-		// Make a deep copy of the data for the original values
-		file.Channels[i].OriginalData = make([]float32, len(file.Channels[i].Data))
-		copy(file.Channels[i].OriginalData, file.Channels[i].Data)
+
+	file.Channels = make([]Telemetry_channel, numCols)
+	var wg sync.WaitGroup
+	wg.Add(numCols)
+	for i := 0; i < numCols; i++ {
+		go func(i int) {
+			defer wg.Done()
+			c := parseConvFactor(convCopy[i])
+			p := parsePrecFactor(precCopy[i])
+			factor := float32(c / p)
+			data := rawCols[i]
+			for k := range data {
+				data[k] *= factor
+			}
+			original := make([]float32, len(data))
+			copy(original, data)
+			file.Channels[i] = Telemetry_channel{
+				Name:         namesCopy[i],
+				Unit:         unitsCopy[i],
+				Conversion:   factor,
+				OriginalConv: factor,
+				Is_Validated: false,
+				Data:         data,
+				OriginalData: original,
+			}
+		}(i)
 	}
+	wg.Wait()
 	return nil
+}
+
+func parseConvFactor(s string) float64 {
+	if s == "" {
+		s = "-7"
+	}
+	c, err := strconv.ParseFloat(s, 32)
+	if err != nil || c == -7 {
+		return 1
+	}
+	return c
+}
+
+func parsePrecFactor(s string) float64 {
+	if s == "" {
+		s = "32"
+	}
+	p, err := strconv.ParseFloat(s, 32)
+	if err != nil || p == 32 {
+		return 1
+	}
+	return p
 }
 
 func (file *Telemetry_file) GetData(name string) ([]float32, error) {
@@ -342,6 +441,125 @@ func (file *Telemetry_file) GetNegation(name string) (bool, error) {
 		}
 	}
 	return false, fmt.Errorf("missing name %s", name)
+}
+
+// PresetApplication pairs a channel name with the preset to apply to it.
+// Used by ApplyPresetsToChannels for batch application.
+type PresetApplication struct {
+	ChannelName string          `json:"ChannelName"`
+	Preset      Channel_preset  `json:"Preset"`
+}
+
+// ApplyPresetsToChannels applies presets to many channels in parallel. Each
+// channel is processed on its own goroutine — channel data is independent so
+// there's no contention. Returns the names of channels that failed (e.g. not
+// found) plus an error if anything went wrong.
+func (file *Telemetry_file) ApplyPresetsToChannels(applications []PresetApplication) ([]string, error) {
+	index := make(map[string]int, len(file.Channels))
+	for i := range file.Channels {
+		index[file.Channels[i].Name] = i
+	}
+
+	type result struct {
+		name string
+		err  error
+	}
+	results := make(chan result, len(applications))
+	var wg sync.WaitGroup
+
+	for _, app := range applications {
+		wg.Add(1)
+		go func(app PresetApplication) {
+			defer wg.Done()
+			idx, ok := index[app.ChannelName]
+			if !ok {
+				results <- result{app.ChannelName, fmt.Errorf("channel '%s' not found", app.ChannelName)}
+				return
+			}
+			ch := &file.Channels[idx]
+			ch.Unit = app.Preset.Unit
+			ch.Conversion = app.Preset.ConversionRate
+			ch.NegateData = app.Preset.NegateData
+
+			data := make([]float32, len(ch.OriginalData))
+			factor := app.Preset.ConversionRate
+			negate := app.Preset.NegateData
+			for j, orig := range ch.OriginalData {
+				v := factor * orig
+				if negate {
+					v = -v
+				}
+				data[j] = v
+			}
+			ch.Data = data
+
+			if app.Preset.UnsignedCorrect {
+				correctUnsignedInPlace(ch.Data)
+			}
+			if app.Preset.HasRangeLimit {
+				enforceRangeInPlace(ch.Data, app.Preset.RangeMin, app.Preset.RangeMax)
+			}
+			results <- result{app.ChannelName, nil}
+		}(app)
+	}
+
+	wg.Wait()
+	close(results)
+
+	var failed []string
+	for r := range results {
+		if r.err != nil {
+			failed = append(failed, r.name)
+		}
+	}
+	if len(failed) == len(applications) && len(applications) > 0 {
+		return failed, fmt.Errorf("all preset applications failed (e.g. %s)", failed[0])
+	}
+	return failed, nil
+}
+
+// correctUnsignedInPlace runs the same overflow-detection heuristic used by
+// DetectAndCorrectUnsignedErrors, but operates on a slice instead of a channel name.
+func correctUnsignedInPlace(data []float32) {
+	const (
+		UINT8_MAX  = 255
+		UINT16_MAX = 65535
+		UINT32_MAX = 4294967295
+	)
+	for j := 1; j < len(data); j++ {
+		current := data[j]
+		previous := data[j-1]
+		if j == 1 {
+			previous = 0
+		}
+		if current >= UINT8_MAX-10 && previous < 127 {
+			data[j] = current - UINT8_MAX - 1
+		}
+		if current >= UINT16_MAX-100 && previous < 32767 {
+			data[j] = current - UINT16_MAX - 1
+		}
+		if current >= UINT32_MAX-1000 && previous < 2147483647 {
+			data[j] = current - UINT32_MAX - 1
+		}
+	}
+}
+
+// enforceRangeInPlace clamps the first sample then carries the previous value
+// forward whenever a sample exits [min, max] — same semantics as EnforceRange.
+func enforceRangeInPlace(data []float32, min, max float32) {
+	if len(data) == 0 || min >= max {
+		return
+	}
+	if data[0] < min {
+		data[0] = min
+	} else if data[0] > max {
+		data[0] = max
+	}
+	for j := 1; j < len(data); j++ {
+		if data[j] > max || data[j] < min {
+			data[j] = data[j-1]
+		}
+	}
 }
 
 func (file *Telemetry_file) ApplyPresetToChannel(channelName string, preset Channel_preset) error {

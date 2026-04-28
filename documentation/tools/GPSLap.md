@@ -15,7 +15,7 @@ Detect lap boundaries from GPS coordinate data and calculate lap times, sector t
 |---------|-------------|
 | **Latitude** | GPS latitude (decimal degrees) |
 | **Longitude** | GPS longitude (decimal degrees) |
-| **Speed** *(optional)* | Vehicle speed — used for speed-based metrics per lap |
+| **Speed** | Vehicle speed — used for speed-based metrics per lap |
 
 ---
 

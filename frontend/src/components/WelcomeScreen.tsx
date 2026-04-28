@@ -127,7 +127,7 @@ const WelcomeScreen: React.FC<Props> = ({ onOpenFileManager }) => {
           File Manager
         </button>
 
-        {/* <button
+        <button
           onClick={() => handleNavigate('/kpi-search')}
           style={{
             padding: '15px 40px',
@@ -154,7 +154,7 @@ const WelcomeScreen: React.FC<Props> = ({ onOpenFileManager }) => {
           }}
         >
           KPI Search
-        </button> */}
+        </button>
       </div>
     </div>
   );

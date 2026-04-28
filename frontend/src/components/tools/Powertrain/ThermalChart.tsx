@@ -24,7 +24,6 @@ function arrMax(arr: number[]): number {
 const COOLANT_IN_COLOR = '#22d3ee';   // cyan — pre-radiator
 const COOLANT_OUT_COLOR = '#60a5fa';  // blue — post-radiator
 const OIL_COLOR = '#fb923c';          // orange
-const EGT_SPREAD_COLOR = '#c084fc';   // purple — reused from main chart
 const DELTA_COLOR = '#34d399';        // emerald — radiator delta
 const MAX_RENDER_POINTS = 5000;
 
@@ -103,7 +102,6 @@ const ThermalChart: React.FC<ThermalChartProps> = ({ result, smoothingWindow, se
     const hasCoolantIn  = !!(ts.coolantTemp?.length);
     const hasCoolantOut = !!(ts.coolantTempOut?.length);
     const hasOil        = !!(ts.oilTemp?.length);
-    const hasEgtSpread  = !!(ts.egtSpread?.length);
     const hasBothCoolant = hasCoolantIn && hasCoolantOut;
 
     if (!hasCoolantIn && !hasCoolantOut && !hasOil) return;
@@ -129,7 +127,6 @@ const ThermalChart: React.FC<ThermalChartProps> = ({ result, smoothingWindow, se
         const coolantIn    = hasCoolantIn  ? rollingAverage((ts.coolantTemp    as number[]).map(Number), smoothingWindow) : [];
         const coolantOut   = hasCoolantOut ? rollingAverage((ts.coolantTempOut as number[]).map(Number), smoothingWindow) : [];
         const oil          = hasOil        ? rollingAverage((ts.oilTemp        as number[]).map(Number), smoothingWindow) : [];
-        const egtSpreadArr = hasEgtSpread  ? rollingAverage((ts.egtSpread      as number[]).map(Number), smoothingWindow) : [];
 
         // Compute radiator delta array
         const radDelta: number[] = hasBothCoolant
@@ -141,13 +138,9 @@ const ThermalChart: React.FC<ThermalChartProps> = ({ result, smoothingWindow, se
         // --- Panel layout ---
         // Top panel (temp traces): always present
         // Middle panel (radiator delta): only if both coolant sensors
-        // Bottom panel (EGT spread correlation): only if egtSpread available
-        const numPanels = 1 + (hasBothCoolant ? 1 : 0) + (hasEgtSpread ? 1 : 0);
-        const topH    = plotHeight * (numPanels === 1 ? 1.0 : numPanels === 2 ? 0.6 : 0.5);
-        const midH    = hasBothCoolant ? plotHeight * (numPanels === 3 ? 0.25 : 0.4) : 0;
-        const botH    = hasEgtSpread   ? plotHeight - topH - midH : 0;
+        const topH    = plotHeight * (hasBothCoolant ? 0.6 : 1.0);
+        const midH    = hasBothCoolant ? plotHeight - topH : 0;
         const midTop  = topH;
-        const botTop  = topH + midH;
 
         const viewStart = viewportStart || times[0];
         const viewEnd   = viewportEnd   || times[n - 1];
@@ -178,13 +171,6 @@ const ThermalChart: React.FC<ThermalChartProps> = ({ result, smoothingWindow, se
           ? d3.scaleLinear().domain([-deltaRange * 0.1, deltaMax * 1.15]).range([midTop + midH, midTop])
           : null;
 
-        // --- EGT spread scale ---
-        let spreadMax = 50;
-        for (const v of egtSpreadArr) { if (isFinite(v) && v > spreadMax) spreadMax = v; }
-        const spreadScale = hasEgtSpread
-          ? d3.scaleLinear().domain([0, spreadMax * 1.15]).range([botTop + botH, botTop])
-          : null;
-
         const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
 
         g.append('defs').append('clipPath').attr('id', 'thermal-clip')
@@ -197,16 +183,11 @@ const ThermalChart: React.FC<ThermalChartProps> = ({ result, smoothingWindow, se
           .call(g2 => g2.selectAll('.domain').remove())
           .call(g2 => g2.selectAll('line').attr('stroke', '#333').attr('stroke-opacity', 0.2));
 
-        // Panel dividers
-        const dividers = [
-          ...(hasBothCoolant ? [midTop]  : []),
-          ...(hasEgtSpread   ? [botTop]  : []),
-        ];
-        dividers.forEach(y => {
+        if (hasBothCoolant) {
           g.append('line')
-            .attr('x1', 0).attr('x2', plotWidth).attr('y1', y).attr('y2', y)
+            .attr('x1', 0).attr('x2', plotWidth).attr('y1', midTop).attr('y2', midTop)
             .attr('stroke', '#555').attr('stroke-width', 1);
-        });
+        }
 
         // X axis
         g.append('g')
@@ -235,7 +216,7 @@ const ThermalChart: React.FC<ThermalChartProps> = ({ result, smoothingWindow, se
         yAxisTemp.append('text')
           .attr('transform', 'rotate(-90)').attr('x', -(topH / 2)).attr('y', -58)
           .attr('text-anchor', 'middle').attr('fill', COOLANT_IN_COLOR)
-          .attr('font-size', '10px').attr('font-weight', 'bold').text('Temp (°C)');
+          .attr('font-size', '10px').attr('font-weight', 'bold').text('Temp (°F)');
 
         if (deltaScale) {
           const yAxisDelta = g.append('g')
@@ -246,19 +227,7 @@ const ThermalChart: React.FC<ThermalChartProps> = ({ result, smoothingWindow, se
           yAxisDelta.append('text')
             .attr('transform', 'rotate(-90)').attr('x', -(midTop + midH / 2)).attr('y', -58)
             .attr('text-anchor', 'middle').attr('fill', DELTA_COLOR)
-            .attr('font-size', '10px').attr('font-weight', 'bold').text('Rad Delta (°C)');
-        }
-
-        if (spreadScale) {
-          const yAxisSpread = g.append('g')
-            .call(d3.axisLeft(spreadScale).ticks(4))
-            .call(g2 => g2.selectAll('text').attr('fill', EGT_SPREAD_COLOR).attr('font-size', '10px'))
-            .call(g2 => g2.selectAll('line').attr('stroke', EGT_SPREAD_COLOR))
-            .call(g2 => g2.select('.domain').attr('stroke', EGT_SPREAD_COLOR));
-          yAxisSpread.append('text')
-            .attr('transform', 'rotate(-90)').attr('x', -(botTop + botH / 2)).attr('y', -58)
-            .attr('text-anchor', 'middle').attr('fill', EGT_SPREAD_COLOR)
-            .attr('font-size', '10px').attr('font-weight', 'bold').text('EGT Spread (°C)');
+            .attr('font-size', '10px').attr('font-weight', 'bold').text('Rad Delta (°F)');
         }
 
         const lineGen = d3.line<number>()
@@ -293,19 +262,6 @@ const ThermalChart: React.FC<ThermalChartProps> = ({ result, smoothingWindow, se
             .attr('x1', 0).attr('x2', plotWidth)
             .attr('y1', deltaScale(0)).attr('y2', deltaScale(0))
             .attr('stroke', '#555').attr('stroke-dasharray', '4,3').attr('stroke-width', 1);
-        }
-
-        // --- Draw EGT spread correlation panel ---
-        if (spreadScale && egtSpreadArr.length) {
-          const spreadLine = d3.line<number>()
-            .defined(i => isFinite(egtSpreadArr[i]))
-            .x(i => xScale(times[i]))
-            .y(i => spreadScale!(egtSpreadArr[i]));
-
-          g.append('path')
-            .datum(sampledIdx)
-            .attr('fill', 'none').attr('stroke', EGT_SPREAD_COLOR).attr('stroke-width', 1.8)
-            .attr('d', spreadLine).attr('clip-path', 'url(#thermal-clip)');
         }
 
         // --- Draw temp panel: coolant in/out fill area + lines ---
@@ -364,33 +320,7 @@ const ThermalChart: React.FC<ThermalChartProps> = ({ result, smoothingWindow, se
 
         const annotGroup = g.append('g');
 
-        annotChannels.forEach((ch, ci) => {
-          const warmupEndIdx = idxAtTime(times, warmupEnd);
-          const finalStartIdx = idxAtTime(times, finalStart);
-
-          const warmupRate = rateOfRise(ch.arr, times, 0, warmupEndIdx);
-          const finalRate  = rateOfRise(ch.arr, times, finalStartIdx, n - 1);
-
-          const xAnnot = plotWidth - 2;
-          const baseY  = tempScale(ch.arr[n - 1]) + ci * 12;
-
-          if (isFinite(warmupRate)) {
-            const sign = warmupRate >= 0 ? '+' : '';
-            annotGroup.append('text')
-              .attr('x', 4 + ci * 90).attr('y', topH - 4)
-              .attr('fill', ch.color).attr('font-size', '9px')
-              .text(`${ch.label} +60s: ${sign}${warmupRate.toFixed(1)}°/min`);
-          }
-
-          if (isFinite(finalRate)) {
-            const sign = finalRate >= 0 ? '+' : '';
-            annotGroup.append('text')
-              .attr('x', xAnnot).attr('y', Math.max(6, Math.min(topH - 4, baseY)))
-              .attr('text-anchor', 'end').attr('fill', ch.color).attr('font-size', '9px')
-              .text(`last 30s: ${sign}${finalRate.toFixed(1)}°/min`);
-          }
-        });
-
+        
         // --- Cursor ---
         if (cursorTime !== null && cursorTime >= viewStart && cursorTime <= viewEnd) {
           g.append('line')
@@ -410,12 +340,11 @@ const ThermalChart: React.FC<ThermalChartProps> = ({ result, smoothingWindow, se
           ...(hasCoolantOut ? [{ name: 'Coolant (post-rad)', color: COOLANT_OUT_COLOR, key: 'coolantOut', dash: true }]  : []),
           ...(hasOil        ? [{ name: 'Oil Temp',           color: OIL_COLOR,         key: 'oil'        }]              : []),
           ...(hasBothCoolant ? [{ name: 'Rad Δ', color: DELTA_COLOR, key: 'radDelta' }] : []),
-          ...(hasEgtSpread  ? [{ name: 'EGT Spread', color: EGT_SPREAD_COLOR, key: 'egtSpread' }] : []),
         ];
 
         const itemWidths = legendItems.map(item => {
           const val = cdn?.[item.key];
-          const txt = `${item.name}: ${val !== undefined ? val.toFixed(1) : '--'}°C`;
+          const txt = `${item.name}: ${val !== undefined ? val.toFixed(1) : '--'}°F`;
           return txt.length * 6 + 28;
         });
         const gap = 10;
@@ -430,7 +359,7 @@ const ThermalChart: React.FC<ThermalChartProps> = ({ result, smoothingWindow, se
             .attr('stroke-dasharray', item.dash ? '6,3' : 'none');
           row.append('text').attr('x', 20).attr('y', 11)
             .attr('fill', '#ccc').attr('font-size', '10px')
-            .text(`${item.name}: ${val !== undefined ? val.toFixed(1) : '--'}°C`);
+            .text(`${item.name}: ${val !== undefined ? val.toFixed(1) : '--'}°F`);
           curX += itemWidths[idx] + gap;
         });
 
@@ -456,7 +385,6 @@ const ThermalChart: React.FC<ThermalChartProps> = ({ result, smoothingWindow, se
     const coolantIn    = rollingAverage((ts.coolantTemp    || []).map(Number), smoothingWindow);
     const coolantOut   = rollingAverage((ts.coolantTempOut || []).map(Number), smoothingWindow);
     const oil          = rollingAverage((ts.oilTemp        || []).map(Number), smoothingWindow);
-    const egtSpreadArr = rollingAverage((ts.egtSpread      || []).map(Number), smoothingWindow);
 
     let ci = 0, minDiff = Math.abs(times[0] - time);
     for (let i = 1; i < times.length; i++) {
@@ -471,7 +399,6 @@ const ThermalChart: React.FC<ThermalChartProps> = ({ result, smoothingWindow, se
       coolantOut: outV,
       oil:        oil[ci],
       radDelta:   (isFinite(inV) && isFinite(outV)) ? inV - outV : NaN,
-      egtSpread:  egtSpreadArr[ci],
     };
   }, [result, smoothingWindow]);
 
@@ -602,11 +529,6 @@ const ThermalChart: React.FC<ThermalChartProps> = ({ result, smoothingWindow, se
         {hasBothCoolant && (
           <span style={{ fontSize: '10px', color: '#888' }}>
             Middle panel = radiator delta (pre − post) · shaded area between traces
-          </span>
-        )}
-        {ts?.egtSpread?.length && (
-          <span style={{ fontSize: '10px', color: '#888' }}>
-            · Bottom panel = EGT spread correlation
           </span>
         )}
         <button

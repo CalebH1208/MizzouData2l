@@ -106,10 +106,6 @@ const DownforceToolUI: React.FC<DownforceToolUIProps> = ({ fragment }) => {
       errors.push('All channels must be different');
     }
 
-    if (zeroFL <= 0 || zeroFR <= 0 || zeroRL <= 0 || zeroRR <= 0) {
-      errors.push('Zero positions must be positive');
-    }
-
     if (motionRatioFront <= 0 || motionRatioRear <= 0) {
       errors.push('Motion ratios must be positive');
     }

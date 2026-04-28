@@ -44,6 +44,13 @@ func WriteString(w io.Writer, s string) error {
 }
 
 func readString(r io.Reader) (string, error) {
+	return readStringBounded(r, 0)
+}
+
+// readStringBounded reads a length-prefixed string. If maxRemaining > 0, it rejects
+// length values that exceed remaining file bytes — guarding against corrupt headers
+// that would otherwise trigger a multi-GB allocation.
+func readStringBounded(r io.Reader, maxRemaining int64) (string, error) {
 	var l uint32
 	if err := binary.Read(r, binary.LittleEndian, &l); err != nil {
 		return "", err
@@ -51,11 +58,27 @@ func readString(r io.Reader) (string, error) {
 	if l == 0 {
 		return "", nil
 	}
+	if maxRemaining > 0 && int64(l) > maxRemaining {
+		return "", fmt.Errorf("corrupt MRTF: string length %d exceeds remaining file size %d", l, maxRemaining)
+	}
 	buf := make([]byte, l)
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return "", err
 	}
 	return string(buf), nil
+}
+
+// readUint32Bounded reads a uint32 length and validates it against the maximum
+// number of float64s that could possibly remain in the file.
+func readUint32Bounded(r io.Reader, maxRemainingBytes int64, bytesPerElement int64) (uint32, error) {
+	var l uint32
+	if err := binary.Read(r, binary.LittleEndian, &l); err != nil {
+		return 0, err
+	}
+	if maxRemainingBytes > 0 && int64(l)*bytesPerElement > maxRemainingBytes {
+		return 0, fmt.Errorf("corrupt MRTF: array length %d exceeds remaining file capacity", l)
+	}
+	return l, nil
 }
 
 // writeFloat64Slice writes a []float64 as raw little-endian bytes in one shot.
@@ -446,6 +469,16 @@ func (B *Basic_telemetry_file) Read_BTF(filepath string) error {
 	}
 	defer f.Close()
 
+	stat, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	fileSize := stat.Size()
+	remaining := func() int64 {
+		pos, _ := f.Seek(0, io.SeekCurrent)
+		return fileSize - pos
+	}
+
 	magic := make([]byte, 4)
 	if _, err := io.ReadFull(f, magic); err != nil {
 		return err
@@ -517,8 +550,8 @@ func (B *Basic_telemetry_file) Read_BTF(filepath string) error {
 		if err := binary.Read(f, binary.LittleEndian, &conv); err != nil {
 			return err
 		}
-		var dataLen uint32
-		if err := binary.Read(f, binary.LittleEndian, &dataLen); err != nil {
+		dataLen, err := readUint32Bounded(f, remaining(), 8)
+		if err != nil {
 			return err
 		}
 
@@ -569,9 +602,10 @@ func (B *Basic_telemetry_file) Read_BTF(filepath string) error {
 	wg.Wait()
 	close(errChan)
 
-	// Check for errors
-	if err := <-errChan; err != nil {
-		return err
+	for err := range errChan {
+		if err != nil {
+			return err
+		}
 	}
 
 	// Scan for optional extension sections (DLTS, NOTS, CLOG, TMUT)
@@ -609,8 +643,8 @@ func (B *Basic_telemetry_file) Read_BTF(filepath string) error {
 					if err != nil {
 						goto doneScanning
 					}
-					var dataLen uint32
-					if err := binary.Read(f, binary.LittleEndian, &dataLen); err != nil {
+					dataLen, err := readUint32Bounded(f, remaining(), 8)
+					if err != nil {
 						goto doneScanning
 					}
 					data := make([]float64, dataLen)
@@ -694,8 +728,8 @@ func (B *Basic_telemetry_file) Read_BTF(filepath string) error {
 				if err := binary.Read(f, binary.LittleEndian, &conv); err != nil {
 					goto doneScanning
 				}
-				var dataLen uint32
-				if err := binary.Read(f, binary.LittleEndian, &dataLen); err != nil {
+				dataLen, err := readUint32Bounded(f, remaining(), 8)
+				if err != nil {
 					goto doneScanning
 				}
 				data := make([]float64, dataLen)

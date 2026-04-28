@@ -522,15 +522,13 @@ func (fg *Full_graph) LoadPreviewChannel(telemetryFile *Backend.Telemetry_file, 
 	return nil
 }
 
-// PreviewValidationChannel is a frontend-accessible wrapper for LoadPreviewChannel
-// It loads a channel from the validation data (Telemetry_file) for preview in the DataEntryPage
+func (fg *Full_graph) SetPreviewParser(parser *Backend.Telemetry_file) {
+	fg.previewParser = parser
+}
+
 func (fg *Full_graph) PreviewValidationChannel(channelName string) error {
-	if fg.stored_file_manager == nil {
-		return fmt.Errorf("stored file manager not initialized")
-	}
-	if fg.stored_file_manager.Parser == nil {
+	if fg.previewParser == nil {
 		return fmt.Errorf("telemetry file parser not available")
 	}
-
-	return fg.LoadPreviewChannel(fg.stored_file_manager.Parser, channelName)
+	return fg.LoadPreviewChannel(fg.previewParser, channelName)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -412,7 +413,9 @@ func (cs *Cloud_storage) DownloadFile(cloudKey, localPath string) error {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	f, err := os.Create(localPath)
+	// Download to a temp path so a failure doesn't destroy any existing local file.
+	tmpPath := localPath + ".part"
+	f, err := os.Create(tmpPath)
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
 	}
@@ -423,11 +426,8 @@ func (cs *Cloud_storage) DownloadFile(cloudKey, localPath string) error {
 		filename: filename,
 	}
 
-	// Run the actual download in a goroutine so progress events can be
-	// processed by the Wails JS bridge while the download is in flight.
 	go func() {
-		defer f.Close()
-		out, err := cs.tmClient.DownloadObject(context.Background(),
+		out, downloadErr := cs.tmClient.DownloadObject(context.Background(),
 			&transfermanager.DownloadObjectInput{
 				Bucket:   aws.String(cs.config.BucketName),
 				Key:      aws.String(cloudKey),
@@ -437,12 +437,22 @@ func (cs *Cloud_storage) DownloadFile(cloudKey, localPath string) error {
 				o.ObjectProgressListeners.Register(listener)
 			},
 		)
-		if err != nil {
-			_ = os.Remove(localPath)
+		f.Close()
+		if downloadErr != nil {
+			_ = os.Remove(tmpPath)
 			runtime.EventsEmit(cs.ctx, "transfer:error", map[string]string{
 				"filename":  filename,
 				"direction": "download",
-				"error":     err.Error(),
+				"error":     downloadErr.Error(),
+			})
+			return
+		}
+		if err := os.Rename(tmpPath, localPath); err != nil {
+			_ = os.Remove(tmpPath)
+			runtime.EventsEmit(cs.ctx, "transfer:error", map[string]string{
+				"filename":  filename,
+				"direction": "download",
+				"error":     fmt.Sprintf("failed to finalize download: %v", err),
 			})
 			return
 		}
@@ -522,6 +532,17 @@ func (cs *Cloud_storage) CreateCloudFolder(prefix string) error {
 	return err
 }
 
+// encodeCopySource builds a properly URL-encoded CopySource value of the form
+// "<bucket>/<key>". S3 requires the key portion to be URL-encoded, but path
+// separators ("/") must be preserved.
+func encodeCopySource(bucket, key string) string {
+	parts := strings.Split(key, "/")
+	for i, p := range parts {
+		parts[i] = url.PathEscape(p)
+	}
+	return url.PathEscape(bucket) + "/" + strings.Join(parts, "/")
+}
+
 // CopyCloudFile copies an S3 object to a new key (keeping the original).
 func (cs *Cloud_storage) CopyCloudFile(srcKey, dstKey string) error {
 	if !cs.IsConfigured() {
@@ -530,7 +551,7 @@ func (cs *Cloud_storage) CopyCloudFile(srcKey, dstKey string) error {
 	_, err := cs.s3Client.CopyObject(context.Background(), &s3.CopyObjectInput{
 		Bucket:     aws.String(cs.config.BucketName),
 		Key:        aws.String(dstKey),
-		CopySource: aws.String(cs.config.BucketName + "/" + srcKey),
+		CopySource: aws.String(encodeCopySource(cs.config.BucketName, srcKey)),
 	})
 	if err != nil {
 		return fmt.Errorf("copy failed: %w", err)
@@ -574,7 +595,7 @@ func (cs *Cloud_storage) RenameCloudFile(oldKey, newKey string) error {
 	_, err := cs.s3Client.CopyObject(context.Background(), &s3.CopyObjectInput{
 		Bucket:     aws.String(cs.config.BucketName),
 		Key:        aws.String(newKey),
-		CopySource: aws.String(cs.config.BucketName + "/" + oldKey),
+		CopySource: aws.String(encodeCopySource(cs.config.BucketName, oldKey)),
 	})
 	if err != nil {
 		return fmt.Errorf("copy failed: %w", err)

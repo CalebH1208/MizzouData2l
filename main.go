@@ -22,6 +22,7 @@ func main() {
 	logFileParser := Backend.CreateNewTelemetryFile()
 	storedFileManager := Backend.New_BTF(logFileParser)
 	tuneGraph := graph.New_full_graph(storedFileManager)
+	tuneGraph.SetPreviewParser(logFileParser)
 	toolManager := Backend.New_tool_manager(tuneGraph)
 	presetManager := Backend.New_preset_manager()
 	syncState := Backend.New_sync_state()

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Backend } from '../../wailsjs/go/models';
-import { ApplyPresetToChannel } from '../../wailsjs/go/backend/Telemetry_file';
+import { ApplyPresetToChannel, ApplyPresetsToChannels } from '../../wailsjs/go/backend/Telemetry_file';
 import { LogPrint } from '../../wailsjs/runtime/runtime';
 
 interface PresetSuggestionModalProps {
@@ -45,22 +45,27 @@ const PresetSuggestionModal: React.FC<PresetSuggestionModalProps> = ({ matches, 
 
   const handleApplyAll = async () => {
     setIsApplying(true);
-    let successCount = 0;
-    const successfulChannels: string[] = [];
-
-    for (const match of remainingMatches) {
-      try {
-        await ApplyPresetToChannel(match.ChannelName, match.MatchedPreset);
-        successCount++;
-        successfulChannels.push(match.ChannelName);
-        LogPrint(`Applied preset "${match.MatchedPreset.name}" to channel "${match.ChannelName}"`);
-      } catch (err) {
-        LogPrint(`Error applying preset to ${match.ChannelName}: ${err}`);
+    const applications = remainingMatches.map(m =>
+      Backend.PresetApplication.createFrom({ ChannelName: m.ChannelName, Preset: m.MatchedPreset })
+    );
+    try {
+      const failed = await ApplyPresetsToChannels(applications);
+      const failedSet = new Set(failed || []);
+      const successfulChannels = remainingMatches
+        .map(m => m.ChannelName)
+        .filter(name => !failedSet.has(name));
+      for (const m of remainingMatches) {
+        if (!failedSet.has(m.ChannelName)) {
+          LogPrint(`Applied preset "${m.MatchedPreset.name}" to channel "${m.ChannelName}"`);
+        } else {
+          LogPrint(`Failed to apply preset to ${m.ChannelName}`);
+        }
       }
+      setAppliedCount(prev => prev + successfulChannels.length);
+      setAppliedChannels(prev => [...prev, ...successfulChannels]);
+    } catch (err) {
+      LogPrint(`Error applying presets: ${err}`);
     }
-
-    setAppliedCount(prev => prev + successCount);
-    setAppliedChannels(prev => [...prev, ...successfulChannels]);
     setRemainingMatches([]);
     setIsApplying(false);
   };

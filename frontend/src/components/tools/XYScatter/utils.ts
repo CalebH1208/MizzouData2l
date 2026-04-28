@@ -114,8 +114,9 @@ export const nipySpectralInterpolator = (t: number): string => {
     [1.0, 0.6, 0.6],
   ];
 
-  const scaled = t * (colors.length - 1);
-  const i = Math.floor(scaled);
+  const safeT = Number.isFinite(t) ? Math.max(0, Math.min(1, t)) : 0;
+  const scaled = safeT * (colors.length - 1);
+  const i = Math.max(0, Math.min(colors.length - 1, Math.floor(scaled)));
   const j = Math.min(i + 1, colors.length - 1);
   const frac = scaled - i;
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ExecuteTool } from '../../../../wailsjs/go/Backend/Tool_manager';
 import { ShiftAnalysisToolUIProps, ToolResult, Preset, ShiftEvent } from './types';
-import { loadPresets, savePresets, exportToPNG, parseGearRatios } from './utils';
+import { loadPresets, savePresets, exportToPNG, exportElementToPNG, parseGearRatios } from './utils';
 import { ParameterControls } from './ParameterControls';
 import { UpshiftOverlayChart } from './UpshiftOverlayChart';
 import { DownshiftScatterChart } from './DownshiftScatterChart';
@@ -29,8 +29,10 @@ const ShiftAnalysisToolUI: React.FC<ShiftAnalysisToolUIProps> = ({ fragment }) =
   const [executing, setExecuting] = useState<boolean>(false);
 
   const [presets, setPresets] = useState<Preset[]>([]);
+  const [isExporting, setIsExporting] = useState<boolean>(false);
 
   const chartContainerRef = useRef<HTMLDivElement>(null);
+  const kpiContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setPresets(loadPresets());
@@ -97,7 +99,20 @@ const ShiftAnalysisToolUI: React.FC<ShiftAnalysisToolUIProps> = ({ fragment }) =
   };
 
   const handleExportToPNG = async () => {
-    if (!chartContainerRef.current || !result) return;
+    if (!result) return;
+
+    if (analysisMode === 'kpi-summary') {
+      setIsExporting(true);
+      await new Promise(requestAnimationFrame);
+      try {
+        await exportElementToPNG(kpiContainerRef.current, 'kpi-summary', setError);
+      } finally {
+        setIsExporting(false);
+      }
+      return;
+    }
+
+    if (!chartContainerRef.current) return;
     const svgElement = chartContainerRef.current.querySelector('svg');
     if (!svgElement) return;
     await exportToPNG(svgElement, analysisMode, setError);
@@ -321,14 +336,14 @@ const ShiftAnalysisToolUI: React.FC<ShiftAnalysisToolUIProps> = ({ fragment }) =
 
           <button
             onClick={handleExportToPNG}
-            disabled={!result || analysisMode === 'metrics-table' || analysisMode === 'kpi-summary'}
+            disabled={!result || analysisMode === 'metrics-table'}
             style={{
               padding: '6px 12px',
-              backgroundColor: result && analysisMode !== 'metrics-table' && analysisMode !== 'kpi-summary' ? '#3b82f6' : '#555',
+              backgroundColor: result && analysisMode !== 'metrics-table' ? '#3b82f6' : '#555',
               color: '#fff',
               border: 'none',
               borderRadius: '3px',
-              cursor: result && analysisMode !== 'metrics-table' && analysisMode !== 'kpi-summary' ? 'pointer' : 'not-allowed',
+              cursor: result && analysisMode !== 'metrics-table' ? 'pointer' : 'not-allowed',
               fontSize: '11px',
               fontWeight: 'bold',
               marginLeft: 'auto',
@@ -375,7 +390,7 @@ const ShiftAnalysisToolUI: React.FC<ShiftAnalysisToolUIProps> = ({ fragment }) =
         )}
 
         {result && analysisMode === 'metrics-table' && renderMetricsTable(result)}
-        {result && analysisMode === 'kpi-summary' && renderKPISummary(result)}
+        {result && analysisMode === 'kpi-summary' && renderKPISummary(result, kpiContainerRef, isExporting)}
 
         {!result && (
           <div style={{
@@ -536,7 +551,7 @@ const renderMetricsTable = (result: ToolResult) => {
   );
 };
 
-const renderKPISummary = (result: ToolResult) => {
+const renderKPISummary = (result: ToolResult, containerRef: React.RefObject<HTMLDivElement>, isExporting: boolean) => {
   const shifts = result.data.shifts;
 
   const normalizedShifts = shifts.map((s: ShiftEvent) => {
@@ -661,89 +676,94 @@ const renderKPISummary = (result: ToolResult) => {
   });
 
   return (
-    <div style={{
-      flex: 1,
+    <div ref={containerRef} style={{
+      flex: 'none',
       backgroundColor: '#1a1a1a',
       borderRadius: '4px',
       border: '1px solid #333',
       padding: '12px',
-      overflowY: 'auto',
+      minHeight: 0,
+      minWidth: 0,
+      height: 'auto',
+      maxHeight: isExporting ? 'none' : '100%',
+      overflow: isExporting ? 'hidden' : 'auto',
+      boxSizing: 'border-box',
     }}>
-      <div style={{ marginBottom: '16px' }}>
-        <h3 style={{ margin: '0 0 4px 0', color: '#F1B82D', fontSize: '16px', fontWeight: 'bold' }}>Performance Dashboard</h3>
+      <div style={{ marginBottom: '8px' }}>
+        <h3 style={{ margin: '0 0 2px 0', color: '#F1B82D', fontSize: '16px', fontWeight: 'bold' }}>Performance Dashboard</h3>
         <div style={{ fontSize: '11px', color: '#888', fontStyle: 'italic' }}>
           Statistics calculated from successful shifts only.
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '18px' }}>
-        <div style={{ backgroundColor: '#2a2a2a', padding: '16px', borderRadius: '6px', border: '2px solid #F1B82D' }}>
-          <div style={{ fontSize: '11px', color: '#aaa', marginBottom: '6px', letterSpacing: '1px' }}>TOTAL SHIFTS</div>
-          <div style={{ fontSize: '48px', color: '#F1B82D', fontWeight: 'bold', lineHeight: '1' }}>{totalShifts}</div>
-          <div style={{ fontSize: '13px', color: '#aaa', marginTop: '6px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '10px' }}>
+        <div style={{ backgroundColor: '#2a2a2a', padding: '10px 12px', borderRadius: '6px', border: '2px solid #F1B82D' }}>
+          <div style={{ fontSize: '11px', color: '#aaa', marginBottom: '2px', letterSpacing: '1px' }}>TOTAL SHIFTS</div>
+          <div style={{ fontSize: '36px', color: '#F1B82D', fontWeight: 'bold', lineHeight: '1' }}>{totalShifts}</div>
+          <div style={{ fontSize: '12px', color: '#aaa', marginTop: '3px' }}>
             <span style={{ color: '#4ade80', fontWeight: '500' }}>{upshifts.length} upshifts</span> • <span style={{ color: '#3b82f6', fontWeight: '500' }}>{downshifts.length} downshifts</span>
           </div>
         </div>
 
-        <div style={{ backgroundColor: '#2a2a2a', padding: '16px', borderRadius: '6px', border: '2px solid ' + (successRate >= 95 ? '#4ade80' : successRate >= 80 ? '#facc15' : '#ef4444') }}>
-          <div style={{ fontSize: '11px', color: '#aaa', marginBottom: '6px', letterSpacing: '1px' }}>SUCCESS RATE</div>
-          <div style={{ fontSize: '48px', color: successRate >= 95 ? '#4ade80' : successRate >= 80 ? '#facc15' : '#ef4444', fontWeight: 'bold', lineHeight: '1' }}>
+        <div style={{ backgroundColor: '#2a2a2a', padding: '10px 12px', borderRadius: '6px', border: '2px solid ' + (successRate >= 95 ? '#4ade80' : successRate >= 80 ? '#facc15' : '#ef4444') }}>
+          <div style={{ fontSize: '11px', color: '#aaa', marginBottom: '2px', letterSpacing: '1px' }}>SUCCESS RATE</div>
+          <div style={{ fontSize: '36px', color: successRate >= 95 ? '#4ade80' : successRate >= 80 ? '#facc15' : '#ef4444', fontWeight: 'bold', lineHeight: '1' }}>
             {successRate.toFixed(1)}%
           </div>
-          <div style={{ fontSize: '13px', color: '#aaa', marginTop: '6px', fontWeight: '500' }}>
+          <div style={{ fontSize: '12px', color: '#aaa', marginTop: '3px', fontWeight: '500' }}>
             {successfulShifts.length} / {totalShifts} successful
           </div>
         </div>
       </div>
 
-      <div style={{ marginBottom: '18px' }}>
-        <h4 style={{ margin: '0 0 8px 0', color: '#4ade80', fontSize: '13px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px' }}>
+      <div style={{ marginBottom: '10px' }}>
+        <h4 style={{ margin: '0 0 4px 0', color: '#4ade80', fontSize: '13px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px' }}>
           ▲ Upshift Performance
         </h4>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: '8px', marginBottom: '12px' }}>
-          <div style={{ backgroundColor: '#2a2a2a', padding: '10px', borderRadius: '4px', border: '1px solid #4ade80' }}>
-            <div style={{ fontSize: '9px', color: '#aaa', marginBottom: '4px' }}>AVG TIME</div>
-            <div style={{ fontSize: '28px', color: '#4ade80', fontWeight: 'bold', lineHeight: '1' }}>{avgUpshiftTime.toFixed(0)}</div>
-            <div style={{ fontSize: '11px', color: '#888', marginTop: '3px', fontWeight: '500' }}>milliseconds</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '6px', marginBottom: '6px' }}>
+          <div style={{ backgroundColor: '#2a2a2a', padding: '6px 8px', borderRadius: '4px', border: '1px solid #4ade80' }}>
+            <div style={{ fontSize: '9px', color: '#aaa', marginBottom: '2px' }}>AVG TIME</div>
+            <div style={{ fontSize: '22px', color: '#4ade80', fontWeight: 'bold', lineHeight: '1' }}>{avgUpshiftTime.toFixed(0)}</div>
+            <div style={{ fontSize: '10px', color: '#888', marginTop: '2px', fontWeight: '500' }}>milliseconds</div>
           </div>
 
-          <div style={{ backgroundColor: '#2a2a2a', padding: '10px', borderRadius: '4px', border: '1px solid #4ade80' }}>
-            <div style={{ fontSize: '9px', color: '#aaa', marginBottom: '4px' }}>AVG RPM ERROR</div>
-            <div style={{ fontSize: '28px', color: '#a78bfa', fontWeight: 'bold', lineHeight: '1' }}>{avgUpshiftError.toFixed(0)}</div>
-            <div style={{ fontSize: '11px', color: '#888', marginTop: '3px', fontWeight: '500' }}>{avgUpshiftRevMatch.toFixed(1)}% error</div>
+          <div style={{ backgroundColor: '#2a2a2a', padding: '6px 8px', borderRadius: '4px', border: '1px solid #4ade80' }}>
+            <div style={{ fontSize: '9px', color: '#aaa', marginBottom: '2px' }}>AVG RPM ERROR</div>
+            <div style={{ fontSize: '22px', color: '#a78bfa', fontWeight: 'bold', lineHeight: '1' }}>{avgUpshiftError.toFixed(0)}</div>
+            <div style={{ fontSize: '10px', color: '#888', marginTop: '2px', fontWeight: '500' }}>{avgUpshiftRevMatch.toFixed(1)}% error</div>
           </div>
 
-          <div style={{ backgroundColor: '#2a2a2a', padding: '10px', borderRadius: '4px', border: '1px solid #4ade80' }}>
-            <div style={{ fontSize: '9px', color: '#aaa', marginBottom: '4px' }}>AVG G DROP</div>
-            <div style={{ fontSize: '28px', color: avgGDrop < 0.3 ? '#4ade80' : avgGDrop < 0.5 ? '#facc15' : '#ef4444', fontWeight: 'bold', lineHeight: '1' }}>
+          <div style={{ backgroundColor: '#2a2a2a', padding: '6px 8px', borderRadius: '4px', border: '1px solid #4ade80' }}>
+            <div style={{ fontSize: '9px', color: '#aaa', marginBottom: '2px' }}>AVG G DROP</div>
+            <div style={{ fontSize: '22px', color: avgGDrop < 0.3 ? '#4ade80' : avgGDrop < 0.5 ? '#facc15' : '#ef4444', fontWeight: 'bold', lineHeight: '1' }}>
               {avgGDrop.toFixed(2)}
             </div>
-            <div style={{ fontSize: '11px', color: '#888', marginTop: '3px', fontWeight: '500' }}>G-force</div>
+            <div style={{ fontSize: '10px', color: '#888', marginTop: '2px', fontWeight: '500' }}>G-force</div>
           </div>
 
-          <div style={{ backgroundColor: '#2a2a2a', padding: '10px', borderRadius: '4px', border: '1px solid #4ade80' }}>
-            <div style={{ fontSize: '9px', color: '#aaa', marginBottom: '4px' }}>AVG RECOVERY</div>
-            <div style={{ fontSize: '28px', color: avgRecoveryTime < 150 ? '#4ade80' : avgRecoveryTime < 300 ? '#facc15' : '#ef4444', fontWeight: 'bold', lineHeight: '1' }}>
+          <div style={{ backgroundColor: '#2a2a2a', padding: '6px 8px', borderRadius: '4px', border: '1px solid #4ade80' }}>
+            <div style={{ fontSize: '9px', color: '#aaa', marginBottom: '2px' }}>AVG RECOVERY</div>
+            <div style={{ fontSize: '22px', color: avgRecoveryTime < 150 ? '#4ade80' : avgRecoveryTime < 300 ? '#facc15' : '#ef4444', fontWeight: 'bold', lineHeight: '1' }}>
               {avgRecoveryTime.toFixed(0)}
             </div>
-            <div style={{ fontSize: '11px', color: '#888', marginTop: '3px', fontWeight: '500' }}>milliseconds</div>
+            <div style={{ fontSize: '10px', color: '#888', marginTop: '2px', fontWeight: '500' }}>milliseconds</div>
           </div>
         </div>
 
-        <div style={{ backgroundColor: '#1a1a1a', borderRadius: '4px', border: '1px solid #333', padding: '8px' }}>
-          <div style={{ fontSize: '10px', color: '#888', marginBottom: '6px', textTransform: 'uppercase', fontWeight: '500' }}>By Gear Pair</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(95px, 1fr))', gap: '6px' }}>
+        <div style={{ backgroundColor: '#1a1a1a', borderRadius: '4px', border: '1px solid #333', padding: '6px' }}>
+          <div style={{ fontSize: '10px', color: '#888', marginBottom: '4px', textTransform: 'uppercase', fontWeight: '500' }}>By Gear Pair</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(0, 1fr))', gap: '4px' }}>
             {Array.from(gearPairStats.entries())
               .filter(([key, stats]) => stats.shifts.length > 0 && stats.shifts[0].isUpshift)
               .sort((a, b) => a[0].localeCompare(b[0]))
               .map(([key, stats]) => (
-                <div key={key} style={{ backgroundColor: '#0a0a0a', padding: '8px', borderRadius: '3px', border: '1px solid #2a2a2a' }}>
-                  <div style={{ fontSize: '12px', color: '#4ade80', fontWeight: 'bold', marginBottom: '5px' }}>{key}</div>
-                  <div style={{ fontSize: '10px', color: '#888', marginBottom: '2px' }}>Time: <span style={{ color: '#ddd', fontWeight: '500' }}>{stats.avgTime.toFixed(0)}ms</span></div>
-                  <div style={{ fontSize: '10px', color: '#888', marginBottom: '2px' }}>Error: <span style={{ color: '#ddd', fontWeight: '500' }}>{stats.avgError.toFixed(0)} RPM</span></div>
-                  <div style={{ fontSize: '10px', color: '#888', marginBottom: '2px' }}>G Drop: <span style={{ color: '#ddd', fontWeight: '500' }}>{stats.avgGDrop.toFixed(2)} G</span></div>
+                <div key={key} style={{ backgroundColor: '#0a0a0a', padding: '5px 6px', borderRadius: '3px', border: '1px solid #2a2a2a' }}>
+                  <div style={{ fontSize: '12px', color: '#4ade80', fontWeight: 'bold', marginBottom: '2px' }}>{key}</div>
+                  <div style={{ fontSize: '10px', color: '#888', marginBottom: '1px' }}>Time: <span style={{ color: '#ddd', fontWeight: '500' }}>{stats.avgTime.toFixed(0)}ms</span></div>
+                  <div style={{ fontSize: '10px', color: '#888', marginBottom: '1px' }}>Error: <span style={{ color: '#ddd', fontWeight: '500' }}>{stats.avgError.toFixed(0)} RPM</span></div>
+                  <div style={{ fontSize: '10px', color: '#888', marginBottom: '1px' }}>G Drop: <span style={{ color: '#ddd', fontWeight: '500' }}>{stats.avgGDrop.toFixed(2)} G</span></div>
                   {stats.consistency > 0 && (
-                    <div style={{ fontSize: '10px', color: '#888', marginBottom: '2px' }}>
+                    <div style={{ fontSize: '10px', color: '#888', marginBottom: '1px' }}>
                       σ: <span style={{ color: stats.consistency < 30 ? '#4ade80' : stats.consistency < 60 ? '#facc15' : '#ef4444', fontWeight: '500' }}>{stats.consistency.toFixed(1)}ms</span>
                     </div>
                   )}
@@ -758,36 +778,36 @@ const renderKPISummary = (result: ToolResult) => {
       </div>
 
       <div>
-        <h4 style={{ margin: '0 0 8px 0', color: '#3b82f6', fontSize: '13px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px' }}>
+        <h4 style={{ margin: '0 0 4px 0', color: '#3b82f6', fontSize: '13px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px' }}>
           ▼ Downshift Performance
         </h4>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px', marginBottom: '12px' }}>
-          <div style={{ backgroundColor: '#2a2a2a', padding: '10px', borderRadius: '4px', border: '1px solid #3b82f6' }}>
-            <div style={{ fontSize: '9px', color: '#aaa', marginBottom: '4px' }}>AVG TIME</div>
-            <div style={{ fontSize: '28px', color: '#3b82f6', fontWeight: 'bold', lineHeight: '1' }}>{avgDownshiftTime.toFixed(0)}</div>
-            <div style={{ fontSize: '11px', color: '#888', marginTop: '3px', fontWeight: '500' }}>milliseconds</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '6px', marginBottom: '6px' }}>
+          <div style={{ backgroundColor: '#2a2a2a', padding: '6px 8px', borderRadius: '4px', border: '1px solid #3b82f6' }}>
+            <div style={{ fontSize: '9px', color: '#aaa', marginBottom: '2px' }}>AVG TIME</div>
+            <div style={{ fontSize: '22px', color: '#3b82f6', fontWeight: 'bold', lineHeight: '1' }}>{avgDownshiftTime.toFixed(0)}</div>
+            <div style={{ fontSize: '10px', color: '#888', marginTop: '2px', fontWeight: '500' }}>milliseconds</div>
           </div>
 
-          <div style={{ backgroundColor: '#2a2a2a', padding: '10px', borderRadius: '4px', border: '1px solid #3b82f6' }}>
-            <div style={{ fontSize: '9px', color: '#aaa', marginBottom: '4px' }}>AVG RPM ERROR</div>
-            <div style={{ fontSize: '28px', color: '#a78bfa', fontWeight: 'bold', lineHeight: '1' }}>{avgDownshiftError.toFixed(0)}</div>
-            <div style={{ fontSize: '11px', color: '#888', marginTop: '3px', fontWeight: '500' }}>{avgDownshiftRevMatch.toFixed(1)}% error</div>
+          <div style={{ backgroundColor: '#2a2a2a', padding: '6px 8px', borderRadius: '4px', border: '1px solid #3b82f6' }}>
+            <div style={{ fontSize: '9px', color: '#aaa', marginBottom: '2px' }}>AVG RPM ERROR</div>
+            <div style={{ fontSize: '22px', color: '#a78bfa', fontWeight: 'bold', lineHeight: '1' }}>{avgDownshiftError.toFixed(0)}</div>
+            <div style={{ fontSize: '10px', color: '#888', marginTop: '2px', fontWeight: '500' }}>{avgDownshiftRevMatch.toFixed(1)}% error</div>
           </div>
         </div>
 
-        <div style={{ backgroundColor: '#1a1a1a', borderRadius: '4px', border: '1px solid #333', padding: '8px' }}>
-          <div style={{ fontSize: '10px', color: '#888', marginBottom: '6px', textTransform: 'uppercase', fontWeight: '500' }}>By Gear Pair</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '6px' }}>
+        <div style={{ backgroundColor: '#1a1a1a', borderRadius: '4px', border: '1px solid #333', padding: '6px' }}>
+          <div style={{ fontSize: '10px', color: '#888', marginBottom: '4px', textTransform: 'uppercase', fontWeight: '500' }}>By Gear Pair</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(0, 1fr))', gap: '4px' }}>
             {Array.from(gearPairStats.entries())
               .filter(([key, stats]) => stats.shifts.length > 0 && !stats.shifts[0].isUpshift)
               .sort((a, b) => a[0].localeCompare(b[0]))
               .map(([key, stats]) => (
-                <div key={key} style={{ backgroundColor: '#0a0a0a', padding: '8px', borderRadius: '3px', border: '1px solid #2a2a2a' }}>
-                  <div style={{ fontSize: '12px', color: '#3b82f6', fontWeight: 'bold', marginBottom: '5px' }}>{key}</div>
-                  <div style={{ fontSize: '10px', color: '#888', marginBottom: '2px' }}>Time: <span style={{ color: '#ddd', fontWeight: '500' }}>{stats.avgTime.toFixed(0)}ms</span></div>
-                  <div style={{ fontSize: '10px', color: '#888', marginBottom: '2px' }}>Error: <span style={{ color: '#ddd', fontWeight: '500' }}>{stats.avgError.toFixed(0)} RPM</span></div>
+                <div key={key} style={{ backgroundColor: '#0a0a0a', padding: '5px 6px', borderRadius: '3px', border: '1px solid #2a2a2a' }}>
+                  <div style={{ fontSize: '12px', color: '#3b82f6', fontWeight: 'bold', marginBottom: '2px' }}>{key}</div>
+                  <div style={{ fontSize: '10px', color: '#888', marginBottom: '1px' }}>Time: <span style={{ color: '#ddd', fontWeight: '500' }}>{stats.avgTime.toFixed(0)}ms</span></div>
+                  <div style={{ fontSize: '10px', color: '#888', marginBottom: '1px' }}>Error: <span style={{ color: '#ddd', fontWeight: '500' }}>{stats.avgError.toFixed(0)} RPM</span></div>
                   {stats.consistency > 0 && (
-                    <div style={{ fontSize: '10px', color: '#888', marginBottom: '2px' }}>
+                    <div style={{ fontSize: '10px', color: '#888', marginBottom: '1px' }}>
                       σ: <span style={{ color: stats.consistency < 30 ? '#4ade80' : stats.consistency < 60 ? '#facc15' : '#ef4444', fontWeight: '500' }}>{stats.consistency.toFixed(1)}ms</span>
                     </div>
                   )}

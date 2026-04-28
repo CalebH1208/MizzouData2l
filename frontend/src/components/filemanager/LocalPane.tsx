@@ -395,7 +395,7 @@ const LocalPane: React.FC<Props> = ({
         )}
       </div>
 
-      {/* {showTagPanel && selectedIsMRTF && (
+      {showTagPanel && selectedIsMRTF && (
         <div style={{
           borderTop: '2px solid #333',
           padding: '8px 10px',
@@ -421,7 +421,7 @@ const LocalPane: React.FC<Props> = ({
           </div>
           <TagEditor tags={fileTags} onChange={setFileTags} />
         </div>
-      )} */}
+      )}
 
       <ConfirmModal {...confirmModal} onCancel={() => setConfirmModal((p) => ({ ...p, isOpen: false }))} />
       <PromptModal {...promptModal} onCancel={() => setPromptModal((p) => ({ ...p, isOpen: false }))} />

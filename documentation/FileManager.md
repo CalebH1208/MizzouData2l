@@ -42,7 +42,7 @@ All operations act on the currently selected file or folder.
 | **+ Folder** | Create a new subfolder (prompted for name) |
 | **Copy** | Copy the selected file to the clipboard |
 | **Paste** | Paste the clipboard file into the current folder |
-| **Rename** | Rename the selected file or folder (prompted; `.MRTF` extension is required on files) |
+| **Rename** | Rename the selected file (prompted; `.MRTF` extension is required) |
 | **Delete** | Permanently delete the selected file or folder (confirmation required) |
 
 ---

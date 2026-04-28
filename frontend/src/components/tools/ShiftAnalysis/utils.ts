@@ -1,3 +1,4 @@
+import { toPng } from 'html-to-image';
 import { Preset } from './types';
 import { SaveFileDialog, WriteFile } from '../../../../wailsjs/go/main/App';
 import { seedPresetsIfNeeded } from '../../../utils/seedPresets';
@@ -74,6 +75,37 @@ export const exportToPNG = async (
     };
 
     img.src = url;
+  } catch (err) {
+    console.error('Failed to export PNG:', err);
+    setError(`Export failed: ${err}`);
+  }
+};
+
+export const exportElementToPNG = async (
+  element: HTMLElement | null,
+  fileNameSuffix: string,
+  setError: (error: string) => void
+): Promise<void> => {
+  if (!element) return;
+
+  try {
+    const filePath = await SaveFileDialog(`shift_analysis_${fileNameSuffix}.png`);
+    if (!filePath) return;
+
+    const dataUrl = await toPng(element, {
+      pixelRatio: 3,
+      backgroundColor: '#1a1a1a',
+      cacheBust: true,
+    });
+
+    const base64 = dataUrl.split(',')[1];
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+
+    await WriteFile(filePath, Array.from(bytes));
   } catch (err) {
     console.error('Failed to export PNG:', err);
     setError(`Export failed: ${err}`);
