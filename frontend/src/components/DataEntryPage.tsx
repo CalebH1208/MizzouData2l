@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { SetName, Load_telemetry_file, GetAllChannelNames, GetAllChannelUnvalidatedNames, GetData, ValidateChannel, UnvalidateChannel, SetConversion,GetConversion,SetUnit,GetUnit, DetectAndCorrectUnsignedErrors, ResetDefaults, EnforceRange, SetNegation, GetNegation, ApplyPresetToChannel, SetStructuredTags } from "../../wailsjs/go/backend/Telemetry_file"
-import { LogFile_to_BTF, Write_BTF, Read_BTF, LoadMRTFForEditing } from  "../../wailsjs/go/backend/Basic_telemetry_file"
+import { SetName, Load_telemetry_file, GetAllChannelNames, GetAllChannelUnvalidatedNames, GetData, ValidateChannel, UnvalidateChannel, SetConversion,GetConversion,SetUnit,GetUnit, DetectAndCorrectUnsignedErrors, ResetDefaults, EnforceRange, SetNegation, GetNegation, ApplyPresetToChannel, SetStructuredTags } from "../../wailsjs/go/Backend/Telemetry_file"
+import { LogFile_to_BTF, Write_BTF, Read_BTF, LoadMRTFForEditing } from  "../../wailsjs/go/Backend/Basic_telemetry_file"
 import { PreviewValidationChannel } from "../../wailsjs/go/graph/Full_graph"
 import { FindMatchingPresets, GetAllPresets } from "../../wailsjs/go/Backend/Preset_manager"
 import { LogPrint, } from "../../wailsjs/runtime/runtime"
@@ -254,7 +254,7 @@ const DataEntryPage: React.FC = () => {
       setSkippedChannels(newSkipped);
 
       await updateChannelData();
-      const unvalidatedNames = await GetAllChannelUnvalidatedNames();
+      const unvalidatedNames: string[] = await GetAllChannelUnvalidatedNames();
 
       const nextUnskipped = unvalidatedNames.find(name => !newSkipped.has(name));
 
@@ -320,7 +320,7 @@ const DataEntryPage: React.FC = () => {
       });
 
       await updateChannelData();
-      const unvalidatedNames = await GetAllChannelUnvalidatedNames();
+      const unvalidatedNames: string[] = await GetAllChannelUnvalidatedNames();
       const nextUnskipped = unvalidatedNames.find(name => !skippedChannels.has(name));
       const nextChannel = nextUnskipped ?? (unvalidatedNames.length > 0 ? unvalidatedNames[0] : "Time");
 

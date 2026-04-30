@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Backend } from '../../wailsjs/go/models';
-import { ApplyPresetToChannel, ApplyPresetsToChannels } from '../../wailsjs/go/backend/Telemetry_file';
+import { ApplyPresetToChannel, ApplyPresetsToChannels } from '../../wailsjs/go/Backend/Telemetry_file';
 import { LogPrint } from '../../wailsjs/runtime/runtime';
 
 interface PresetSuggestionModalProps {

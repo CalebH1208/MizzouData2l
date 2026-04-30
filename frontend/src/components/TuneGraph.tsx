@@ -15,7 +15,7 @@ function sanitizeClassName(name: string): string {
 
 // Throttle utility function - limits function execution to once per wait period
 function throttle<T extends (...args: any[]) => any>(func: T, wait: number): (...args: Parameters<T>) => void {
-  let timeout: NodeJS.Timeout | null = null;
+  let timeout: ReturnType<typeof setTimeout> | null = null;
   let lastRan: number = 0;
 
   return function(...args: Parameters<T>) {

@@ -31,7 +31,7 @@ const LapReplayPanel: React.FC<LapReplayPanelProps> = ({
   onIsPlayingChange,
   onPlaybackSpeedChange,
 }) => {
-  const playbackIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const playbackIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (isPlaying) {

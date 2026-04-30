@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Read_BTF } from '../../wailsjs/go/backend/Basic_telemetry_file'
+import { Read_BTF } from '../../wailsjs/go/Backend/Basic_telemetry_file'
 import {
   InitializeFromStoredFile,
   GetAvailableChannels,
