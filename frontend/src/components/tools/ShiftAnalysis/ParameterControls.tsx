@@ -8,6 +8,7 @@ interface ParameterControlsProps {
   longGChannel: string;
   shiftRequestChannel: string;
   pressureChannel: string;
+  postRegulatorChannel: string;
   flipLongG: boolean;
   gearRatiosInput: string;
   gearPairFilter: string;
@@ -19,6 +20,7 @@ interface ParameterControlsProps {
   onLongGChannelChange: (value: string) => void;
   onShiftRequestChannelChange: (value: string) => void;
   onPressureChannelChange: (value: string) => void;
+  onPostRegulatorChannelChange: (value: string) => void;
   onFlipLongGChange: (checked: boolean) => void;
   onGearRatiosInputChange: (value: string) => void;
   onGearPairFilterChange: (value: string) => void;
@@ -33,6 +35,7 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
   longGChannel,
   shiftRequestChannel,
   pressureChannel,
+  postRegulatorChannel,
   flipLongG,
   gearRatiosInput,
   gearPairFilter,
@@ -44,6 +47,7 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
   onLongGChannelChange,
   onShiftRequestChannelChange,
   onPressureChannelChange,
+  onPostRegulatorChannelChange,
   onFlipLongGChange,
   onGearRatiosInputChange,
   onGearPairFilterChange,
@@ -198,8 +202,8 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
       </div>
 
       <div>
-        <label style={{ display: 'block', marginBottom: '2px', fontSize: '10px', color: '#aaa' }}>
-          Pressure (optional)
+        <label style={{ display: 'block', marginBottom: '2px', fontSize: '10px', color: '#00aaff' }}>
+          Shift Tank Pressure (optional)
         </label>
         <select
           value={pressureChannel}
@@ -209,7 +213,31 @@ export const ParameterControls: React.FC<ParameterControlsProps> = ({
             padding: '4px',
             backgroundColor: '#000',
             color: '#fff',
-            border: '1px solid #555',
+            border: '1px solid #00aaff',
+            borderRadius: '3px',
+            fontSize: '11px',
+          }}
+        >
+          <option value="">None</option>
+          {channelNames.map(name => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label style={{ display: 'block', marginBottom: '2px', fontSize: '10px', color: '#ff4444' }}>
+          Post Regulator Pressure (optional)
+        </label>
+        <select
+          value={postRegulatorChannel}
+          onChange={(e) => onPostRegulatorChannelChange(e.target.value)}
+          style={{
+            width: '100%',
+            padding: '4px',
+            backgroundColor: '#000',
+            color: '#fff',
+            border: '1px solid #ff4444',
             borderRadius: '3px',
             fontSize: '11px',
           }}

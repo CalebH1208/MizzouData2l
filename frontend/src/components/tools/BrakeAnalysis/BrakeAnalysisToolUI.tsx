@@ -85,6 +85,7 @@ const BrakeAnalysisToolUI: React.FC<BrakeAnalysisToolUIProps> = ({ fragment }) =
         brakePressureChannel,
         vehicleMass,
         brakeThreshold,
+        smoothingWindow,
       };
 
       const toolResult = await ExecuteTool('brake-analysis', fragment.id || '', params);
@@ -221,7 +222,6 @@ const BrakeAnalysisToolUI: React.FC<BrakeAnalysisToolUIProps> = ({ fragment }) =
         {result && (
           <TimeSeriesChart
             result={result}
-            smoothingWindow={smoothingWindow}
             error={error}
             setError={setError}
           />

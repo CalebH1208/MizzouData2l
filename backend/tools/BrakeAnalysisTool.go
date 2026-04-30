@@ -3,6 +3,7 @@ package tools
 import (
 	Backend "MizzouDataTool/backend"
 	"fmt"
+	"math"
 )
 
 type BrakeAnalysisTool struct{}
@@ -25,6 +26,56 @@ type BrakeTimeSeries struct {
 	Mph           []float64 `json:"mph"`
 	Watts         []float64 `json:"watts"`
 	IsBraking     []bool    `json:"isBraking"`
+}
+
+type BrakeStats struct {
+	MaxBrakePressure float64 `json:"maxBrakePressure"`
+	MaxWatts         float64 `json:"maxWatts"`
+	BrakingTime      float64 `json:"brakingTime"`
+	PercentBraking   float64 `json:"percentBraking"`
+}
+
+type BrakeAnalysisData struct {
+	TimeSeries BrakeTimeSeries `json:"timeSeries"`
+	Stats      BrakeStats      `json:"stats"`
+}
+
+func brakeRollingAverage(data []float64, windowSize int) []float64 {
+	if windowSize <= 1 {
+		result := make([]float64, len(data))
+		copy(result, data)
+		return result
+	}
+
+	halfWindow := windowSize / 2
+	smoothed := make([]float64, len(data))
+
+	for i := 0; i < len(data); i++ {
+		start := i - halfWindow
+		end := i + halfWindow + 1
+		if start < 0 {
+			start = 0
+		}
+		if end > len(data) {
+			end = len(data)
+		}
+
+		sum := 0.0
+		count := 0
+		for j := start; j < end; j++ {
+			if !math.IsNaN(data[j]) && !math.IsInf(data[j], 0) {
+				sum += data[j]
+				count++
+			}
+		}
+		if count > 0 {
+			smoothed[i] = sum / float64(count)
+		} else {
+			smoothed[i] = data[i]
+		}
+	}
+
+	return smoothed
 }
 
 func (t *BrakeAnalysisTool) Execute(fragment *Backend.Data_fragment, params map[string]interface{}) (*Backend.Tool_result, error) {
@@ -54,6 +105,11 @@ func (t *BrakeAnalysisTool) Execute(fragment *Backend.Data_fragment, params map[
 		brakeThreshold = 50.0
 	}
 
+	smoothingWindow := 1
+	if sw, ok := params["smoothingWindow"].(float64); ok && sw >= 1 {
+		smoothingWindow = int(sw)
+	}
+
 	mphChan, ok := fragment.Channels[mphChannel]
 	if !ok {
 		return nil, fmt.Errorf("channel '%s' not found in fragment", mphChannel)
@@ -69,35 +125,82 @@ func (t *BrakeAnalysisTool) Execute(fragment *Backend.Data_fragment, params map[
 		return nil, fmt.Errorf("channel '%s' not found in fragment", brakePressureChannel)
 	}
 
-	mph := mphChan.Values
-	lonAccel := lonAccelChan.Values
-	brake := brakeChan.Values
+	rawMph := mphChan.Values
+	rawLonAccel := lonAccelChan.Values
+	rawBrake := brakeChan.Values
 	times := fragment.TimeStamps
 
 	n := len(times)
-	if len(mph) < n {
-		n = len(mph)
+	if len(rawMph) < n {
+		n = len(rawMph)
 	}
-	if len(lonAccel) < n {
-		n = len(lonAccel)
+	if len(rawLonAccel) < n {
+		n = len(rawLonAccel)
 	}
-	if len(brake) < n {
-		n = len(brake)
+	if len(rawBrake) < n {
+		n = len(rawBrake)
+	}
+
+	// Compute raw watts: mass(lbs) * lonAccel(g) * speed(mph) — user-defined formula
+	rawWatts := make([]float64, n)
+	for i := 0; i < n; i++ {
+		rawWatts[i] = vehicleMassLbs * rawLonAccel[i] * rawMph[i]
+	}
+
+	// Apply smoothing
+	smoothBrake := brakeRollingAverage(rawBrake[:n], smoothingWindow)
+	smoothMph := brakeRollingAverage(rawMph[:n], smoothingWindow)
+	smoothWatts := brakeRollingAverage(rawWatts, smoothingWindow)
+
+	// isBraking uses smoothed brake pressure
+	isBraking := make([]bool, n)
+	for i := 0; i < n; i++ {
+		isBraking[i] = smoothBrake[i] > brakeThreshold
+	}
+
+	// Compute stats from smoothed data
+	// maxWatts = peak braking power = most negative watts (decel is negative), reported as absolute value
+	maxBrake := -math.MaxFloat64
+	minWatts := math.MaxFloat64
+	for i := 0; i < n; i++ {
+		if smoothBrake[i] > maxBrake {
+			maxBrake = smoothBrake[i]
+		}
+		if smoothWatts[i] < minWatts {
+			minWatts = smoothWatts[i]
+		}
+	}
+	maxBrakingPower := math.Abs(minWatts)
+
+	brakingTime := 0.0
+	for i := 1; i < n; i++ {
+		if isBraking[i] {
+			brakingTime += times[i] - times[i-1]
+		}
+	}
+
+	totalDuration := 0.0
+	if n > 1 {
+		totalDuration = times[n-1] - times[0]
+	}
+	percentBraking := 0.0
+	if totalDuration > 0 {
+		percentBraking = (brakingTime / totalDuration) * 100
 	}
 
 	tsData := BrakeTimeSeries{
 		Times:         times[:n],
-		BrakePressure: brake[:n],
-		Mph:           mph[:n],
-		Watts:         make([]float64, n),
-		IsBraking:     make([]bool, n),
+		BrakePressure: smoothBrake,
+		Mph:           smoothMph,
+		Watts:         smoothWatts,
+		IsBraking:     isBraking,
 	}
 
-	for i := 0; i < n; i++ {
-		speedMs := mph[i] * 0.44704
-		// watts = mass_kg * lonAccel_g * 9.81 m/s^2 * speed_m/s (sign preserved)
-		tsData.Watts[i] = massKg * lonAccel[i] * 9.81 * speedMs
-		tsData.IsBraking[i] = brake[i] > brakeThreshold
+	stats := BrakeStats{
+		MaxBrakePressure: maxBrake,
+		MaxWatts:         maxBrakingPower,
+		BrakingTime:      brakingTime,
+		PercentBraking:   percentBraking,
 	}
 
 	metadata := map[string]interface{}{
@@ -107,6 +210,7 @@ func (t *BrakeAnalysisTool) Execute(fragment *Backend.Data_fragment, params map[
 		"vehicleMassLbs":       vehicleMassLbs,
 		"vehicleMassKg":        massKg,
 		"brakeThreshold":       brakeThreshold,
+		"smoothingWindow":      smoothingWindow,
 		"fragmentStartTime":    fragment.StartTime,
 		"fragmentEndTime":      fragment.EndTime,
 		"pointCount":           n,
@@ -115,7 +219,10 @@ func (t *BrakeAnalysisTool) Execute(fragment *Backend.Data_fragment, params map[
 	return &Backend.Tool_result{
 		ToolName:   t.GetName(),
 		ResultType: "brake-analysis",
-		Data:       tsData,
-		Metadata:   metadata,
+		Data: BrakeAnalysisData{
+			TimeSeries: tsData,
+			Stats:      stats,
+		},
+		Metadata: metadata,
 	}, nil
 }

@@ -146,7 +146,7 @@ const GraphExportRenderer: React.FC<Props> = ({ viewportData, showLegend, showGr
             .datum(normalizedValues)
             .attr('fill', 'none')
             .attr('stroke', adaptColor(channel.color || LABEL_COLOR))
-            .attr('stroke-width', 2)
+            .attr('stroke-width', 1.5)
             .attr('d', line);
 
           // Per-channel Y axis (alternating left/right)
@@ -193,7 +193,7 @@ const GraphExportRenderer: React.FC<Props> = ({ viewportData, showLegend, showGr
             .datum(channel.values)
             .attr('fill', 'none')
             .attr('stroke', adaptColor(channel.color || LABEL_COLOR))
-            .attr('stroke-width', 2)
+            .attr('stroke-width', 1.5)
             .attr('d', line);
         });
 

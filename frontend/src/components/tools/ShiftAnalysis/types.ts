@@ -20,6 +20,7 @@ export interface ShiftEvent {
   preShiftSpeed: number;
   postShiftSpeed: number;
   pneumaticPressure: number;
+  postRegulatorPressure: number;
   deltaRPMError: number;
   shiftEnergyLoss: number;
   shiftFailed: boolean;
@@ -50,6 +51,12 @@ export interface PressurePoint {
   index: number;
 }
 
+export interface PressureOverlayPoint {
+  time: number;
+  shiftTankPressure: number;
+  postRegulatorPressure: number;
+}
+
 export interface TrendLine {
   slope: number;
   intercept: number;
@@ -73,6 +80,7 @@ export interface Preset {
   longGChannel: string;
   shiftRequestChannel: string;
   pressureChannel: string;
+  postRegulatorChannel: string;
   gearRatios: number[];
   flipLongG: boolean;
 }

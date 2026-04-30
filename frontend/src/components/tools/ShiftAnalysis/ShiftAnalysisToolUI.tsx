@@ -6,6 +6,7 @@ import { ParameterControls } from './ParameterControls';
 import { UpshiftOverlayChart } from './UpshiftOverlayChart';
 import { DownshiftScatterChart } from './DownshiftScatterChart';
 import { PressureCorrelationChart } from './PressureCorrelationChart';
+import { PressureOverlayChart } from './PressureOverlayChart';
 import { StatsPanel } from './StatsPanel';
 import { PresetsPanel } from './PresetsPanel';
 
@@ -18,6 +19,7 @@ const ShiftAnalysisToolUI: React.FC<ShiftAnalysisToolUIProps> = ({ fragment }) =
   const [longGChannel, setLongGChannel] = useState<string>('');
   const [shiftRequestChannel, setShiftRequestChannel] = useState<string>('');
   const [pressureChannel, setPressureChannel] = useState<string>('');
+  const [postRegulatorChannel, setPostRegulatorChannel] = useState<string>('');
   const [flipLongG, setFlipLongG] = useState<boolean>(false);
 
   const [gearRatiosInput, setGearRatiosInput] = useState<string>('2.85, 2.10, 1.65, 1.35, 1.10, 0.92');
@@ -71,6 +73,11 @@ const ShiftAnalysisToolUI: React.FC<ShiftAnalysisToolUIProps> = ({ fragment }) =
       return;
     }
 
+    if (analysisMode === 'pressure-overlay' && (!pressureChannel || !postRegulatorChannel)) {
+      setError('Both shift tank and post regulator pressure channels are required for pressure overlay');
+      return;
+    }
+
     setExecuting(true);
 
     try {
@@ -81,6 +88,7 @@ const ShiftAnalysisToolUI: React.FC<ShiftAnalysisToolUIProps> = ({ fragment }) =
         longGChannel,
         shiftRequestChannel,
         pressureChannel,
+        postRegulatorChannel,
         analysisMode,
         gearRatios,
         gearPairFilter,
@@ -118,6 +126,8 @@ const ShiftAnalysisToolUI: React.FC<ShiftAnalysisToolUIProps> = ({ fragment }) =
     await exportToPNG(svgElement, analysisMode, setError);
   };
 
+  const exportDisabled = !result || analysisMode === 'metrics-table';
+
   const handleSavePreset = () => {
     if (!rpmChannel || !gearChannel || !speedChannel || !longGChannel || !shiftRequestChannel) {
       setError('Please select all required channels before saving');
@@ -136,6 +146,7 @@ const ShiftAnalysisToolUI: React.FC<ShiftAnalysisToolUIProps> = ({ fragment }) =
       longGChannel,
       shiftRequestChannel,
       pressureChannel,
+      postRegulatorChannel,
       gearRatios,
       flipLongG,
     };
@@ -181,6 +192,10 @@ const ShiftAnalysisToolUI: React.FC<ShiftAnalysisToolUIProps> = ({ fragment }) =
 
     if (preset.pressureChannel && channelNames.includes(preset.pressureChannel)) {
       setPressureChannel(preset.pressureChannel);
+    }
+
+    if (preset.postRegulatorChannel && channelNames.includes(preset.postRegulatorChannel)) {
+      setPostRegulatorChannel(preset.postRegulatorChannel);
     }
 
     setGearRatiosInput(preset.gearRatios.join(', '));
@@ -234,6 +249,7 @@ const ShiftAnalysisToolUI: React.FC<ShiftAnalysisToolUIProps> = ({ fragment }) =
         longGChannel={longGChannel}
         shiftRequestChannel={shiftRequestChannel}
         pressureChannel={pressureChannel}
+        postRegulatorChannel={postRegulatorChannel}
         flipLongG={flipLongG}
         gearRatiosInput={gearRatiosInput}
         gearPairFilter={gearPairFilter}
@@ -245,6 +261,7 @@ const ShiftAnalysisToolUI: React.FC<ShiftAnalysisToolUIProps> = ({ fragment }) =
         onLongGChannelChange={setLongGChannel}
         onShiftRequestChannelChange={setShiftRequestChannel}
         onPressureChannelChange={setPressureChannel}
+        onPostRegulatorChannelChange={setPostRegulatorChannel}
         onFlipLongGChange={setFlipLongG}
         onGearRatiosInputChange={setGearRatiosInput}
         onGearPairFilterChange={setGearPairFilter}
@@ -335,15 +352,31 @@ const ShiftAnalysisToolUI: React.FC<ShiftAnalysisToolUIProps> = ({ fragment }) =
           </button>
 
           <button
-            onClick={handleExportToPNG}
-            disabled={!result || analysisMode === 'metrics-table'}
+            onClick={() => setAnalysisMode('pressure-overlay')}
             style={{
               padding: '6px 12px',
-              backgroundColor: result && analysisMode !== 'metrics-table' ? '#3b82f6' : '#555',
+              backgroundColor: analysisMode === 'pressure-overlay' ? '#F1B82D' : '#2a2a2a',
+              color: analysisMode === 'pressure-overlay' ? '#000' : '#aaa',
+              border: '1px solid #555',
+              borderRadius: '3px',
+              cursor: 'pointer',
+              fontSize: '11px',
+              fontWeight: analysisMode === 'pressure-overlay' ? 'bold' : 'normal',
+            }}
+          >
+            Pressures
+          </button>
+
+          <button
+            onClick={handleExportToPNG}
+            disabled={exportDisabled}
+            style={{
+              padding: '6px 12px',
+              backgroundColor: !exportDisabled ? '#3b82f6' : '#555',
               color: '#fff',
               border: 'none',
               borderRadius: '3px',
-              cursor: result && analysisMode !== 'metrics-table' ? 'pointer' : 'not-allowed',
+              cursor: !exportDisabled ? 'pointer' : 'not-allowed',
               fontSize: '11px',
               fontWeight: 'bold',
               marginLeft: 'auto',
@@ -366,7 +399,7 @@ const ShiftAnalysisToolUI: React.FC<ShiftAnalysisToolUIProps> = ({ fragment }) =
           </div>
         )}
 
-        {result && (analysisMode === 'upshift-overlay' || analysisMode === 'downshift-scatter' || analysisMode === 'pressure-correlation') && (
+        {result && (analysisMode === 'upshift-overlay' || analysisMode === 'downshift-scatter' || analysisMode === 'pressure-correlation' || analysisMode === 'pressure-overlay') && (
           <div style={{
             flex: 1,
             backgroundColor: '#0a0a0a',
@@ -384,6 +417,9 @@ const ShiftAnalysisToolUI: React.FC<ShiftAnalysisToolUIProps> = ({ fragment }) =
               )}
               {analysisMode === 'pressure-correlation' && (
                 <PressureCorrelationChart result={result} />
+              )}
+              {analysisMode === 'pressure-overlay' && (
+                <PressureOverlayChart result={result} />
               )}
             </div>
           </div>

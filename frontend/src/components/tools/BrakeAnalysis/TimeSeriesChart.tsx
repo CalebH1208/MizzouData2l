@@ -1,18 +1,16 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import * as d3 from 'd3';
 import { Backend } from '../../../../wailsjs/go/models';
-import { rollingAverage, exportToPNG } from './utils';
+import { exportToPNG } from './utils';
 
 interface TimeSeriesChartProps {
   result: Backend.Tool_result | null;
-  smoothingWindow: number;
   error: string;
   setError: (error: string) => void;
 }
 
 const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
   result,
-  smoothingWindow,
   error,
   setError,
 }) => {
@@ -27,12 +25,17 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
 
   useEffect(() => {
     if (!result || !result.data) return;
-    const data: any = result.data;
-    if (!data.times || data.times.length === 0) return;
+    const ts = (result.data as any).timeSeries;
+    if (!ts || !ts.times || ts.times.length === 0) return;
 
-    const times: number[] = data.times.map((t: any) => Number(t));
-    setViewportStart(Math.min(...times));
-    setViewportEnd(Math.max(...times));
+    const times: number[] = ts.times.map((t: any) => Number(t));
+    let minT = times[0], maxT = times[0];
+    for (let i = 1; i < times.length; i++) {
+      if (times[i] < minT) minT = times[i];
+      if (times[i] > maxT) maxT = times[i];
+    }
+    setViewportStart(minT);
+    setViewportEnd(maxT);
     setCursorTime(null);
     setCursorData(null);
   }, [result]);
@@ -41,8 +44,8 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
     const svgElement = svgRef.current;
     if (!svgElement || !result || !result.data) return;
 
-    const data: any = result.data;
-    if (!data.times || data.times.length === 0) {
+    const ts = (result.data as any).timeSeries;
+    if (!ts || !ts.times || ts.times.length === 0) {
       setError('No time data available');
       return;
     }
@@ -68,15 +71,12 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
           return;
         }
 
-        const times: number[] = (data.times || []).map((t: any) => Number(t));
-        const rawBrake: number[] = (data.brakePressure || []).map((v: any) => Number(v));
-        const rawMph: number[] = (data.mph || []).map((v: any) => Number(v));
-        const rawWatts: number[] = (data.watts || []).map((v: any) => Number(v));
-        const isBraking: boolean[] = data.isBraking || [];
-
-        const brake = rollingAverage(rawBrake, smoothingWindow);
-        const mph = rollingAverage(rawMph, smoothingWindow);
-        const watts = rollingAverage(rawWatts, smoothingWindow);
+        // Data arrives pre-smoothed from backend
+        const times: number[] = (ts.times || []).map((t: any) => Number(t));
+        const brake: number[] = (ts.brakePressure || []).map((v: any) => Number(v));
+        const mph: number[] = (ts.mph || []).map((v: any) => Number(v));
+        const watts: number[] = (ts.watts || []).map((v: any) => Number(v));
+        const isBraking: boolean[] = ts.isBraking || [];
 
         const viewStart = viewportStart || times[0];
         const viewEnd = viewportEnd || times[times.length - 1];
@@ -358,7 +358,7 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
         setError(`Rendering failed: ${err}`);
       }
     }, 50);
-  }, [result, smoothingWindow, viewportStart, viewportEnd, cursorTime, cursorData, setError]);
+  }, [result, viewportStart, viewportEnd, cursorTime, cursorData, setError]);
 
   useEffect(() => {
     if (result && result.data) renderPlot();
@@ -372,16 +372,13 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
 
   const updateCursorData = useCallback((time: number) => {
     if (!result || !result.data) return;
-    const data: any = result.data;
+    const ts = (result.data as any).timeSeries;
+    if (!ts) return;
 
-    const times: number[] = (data.times || []).map((t: any) => Number(t));
-    const rawBrake: number[] = (data.brakePressure || []).map((v: any) => Number(v));
-    const rawMph: number[] = (data.mph || []).map((v: any) => Number(v));
-    const rawWatts: number[] = (data.watts || []).map((v: any) => Number(v));
-
-    const brake = rollingAverage(rawBrake, smoothingWindow);
-    const mph = rollingAverage(rawMph, smoothingWindow);
-    const watts = rollingAverage(rawWatts, smoothingWindow);
+    const times: number[] = (ts.times || []).map((t: any) => Number(t));
+    const brake: number[] = (ts.brakePressure || []).map((v: any) => Number(v));
+    const mph: number[] = (ts.mph || []).map((v: any) => Number(v));
+    const watts: number[] = (ts.watts || []).map((v: any) => Number(v));
 
     let closestIdx = 0;
     let minDiff = Math.abs(times[0] - time);
@@ -391,7 +388,7 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
     }
 
     setCursorData({ brake: brake[closestIdx], mph: mph[closestIdx], watts: watts[closestIdx] });
-  }, [result, smoothingWindow]);
+  }, [result]);
 
   useEffect(() => {
     if (cursorTime !== null) updateCursorData(cursorTime);
@@ -402,12 +399,15 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
     event.preventDefault();
     if (!result || !result.data) return;
 
-    const data: any = result.data;
-    if (!data.times || data.times.length === 0) return;
+    const ts = (result.data as any).timeSeries;
+    if (!ts || !ts.times || ts.times.length === 0) return;
 
-    const times: number[] = (data.times || []).map((t: any) => Number(t));
-    const minTime = Math.min(...times);
-    const maxTime = Math.max(...times);
+    const times: number[] = (ts.times || []).map((t: any) => Number(t));
+    let minTime = times[0], maxTime = times[0];
+    for (let i = 1; i < times.length; i++) {
+      if (times[i] < minTime) minTime = times[i];
+      if (times[i] > maxTime) maxTime = times[i];
+    }
     const delta = event.deltaY;
 
     const baseFactor = 1.05;
@@ -465,10 +465,10 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
 
   const snapAndSetCursor = useCallback((clientX: number) => {
     if (!containerRef.current || !result || !result.data) return;
-    const data: any = result.data;
-    if (!data.times || data.times.length === 0) return;
+    const ts = (result.data as any).timeSeries;
+    if (!ts || !ts.times || ts.times.length === 0) return;
 
-    const times: number[] = (data.times || []).map((t: any) => Number(t));
+    const times: number[] = (ts.times || []).map((t: any) => Number(t));
     const rect = containerRef.current.getBoundingClientRect();
     const svgElement = svgRef.current;
     if (!svgElement) return;

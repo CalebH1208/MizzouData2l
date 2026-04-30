@@ -36,8 +36,9 @@ type ShiftEvent struct {
 	RPMDrop         float64 `json:"rpmDrop"`
 	PreShiftSpeed   float64 `json:"preShiftSpeed"`
 	PostShiftSpeed  float64 `json:"postShiftSpeed"`
-	PneumaticPress  float64 `json:"pneumaticPressure"`
-	DeltaRPMError   float64 `json:"deltaRPMError"`
+	PneumaticPress       float64 `json:"pneumaticPressure"`
+	PostRegulatorPress   float64 `json:"postRegulatorPressure"`
+	DeltaRPMError        float64 `json:"deltaRPMError"`
 	ShiftEnergyLoss float64 `json:"shiftEnergyLoss"`
 	ShiftFailed     bool    `json:"shiftFailed"`
 	GForceDrop      float64 `json:"gForceDrop"`
@@ -104,6 +105,7 @@ func (t *ShiftAnalysisTool) Execute(fragment *Backend.Data_fragment, params map[
 	}
 
 	pressureChannelName, _ := params["pressureChannel"].(string)
+	postRegulatorChannelName, _ := params["postRegulatorChannel"].(string)
 
 	// Get channels
 	rpmChannel := fragment.GetChannel(rpmChannelName)
@@ -134,6 +136,11 @@ func (t *ShiftAnalysisTool) Execute(fragment *Backend.Data_fragment, params map[
 	var pressureChannel *Backend.Fragment_channel
 	if pressureChannelName != "" {
 		pressureChannel = fragment.GetChannel(pressureChannelName)
+	}
+
+	var postRegulatorChannel *Backend.Fragment_channel
+	if postRegulatorChannelName != "" {
+		postRegulatorChannel = fragment.GetChannel(postRegulatorChannelName)
 	}
 
 	analysisMode, ok := params["analysisMode"].(string)
@@ -181,7 +188,7 @@ func (t *ShiftAnalysisTool) Execute(fragment *Backend.Data_fragment, params map[
 	// Detect shifts
 	fmt.Println("[ShiftAnalysisTool] Detecting shifts...")
 	shifts := detectShifts(fragment.TimeStamps, rpmChannel.Values, gearChannel.Values, speedChannel.Values,
-		longGValues, shiftRequestChannel.Values, pressureChannel, minGearChangeDuration, steadyStateWindow, gearRatios)
+		longGValues, shiftRequestChannel.Values, pressureChannel, postRegulatorChannel, minGearChangeDuration, steadyStateWindow, gearRatios)
 
 	fmt.Printf("[ShiftAnalysisTool] Detected %d shifts\n", len(shifts))
 
@@ -215,6 +222,11 @@ func (t *ShiftAnalysisTool) Execute(fragment *Backend.Data_fragment, params map[
 		visualizationData = shifts
 	case "kpi-summary":
 		visualizationData, err = calculateKPIs(shifts)
+	case "pressure-overlay":
+		if pressureChannel == nil || postRegulatorChannel == nil {
+			return nil, fmt.Errorf("both shift tank and post regulator pressure channels are required for pressure-overlay mode")
+		}
+		visualizationData, err = generatePressureOverlay(fragment.TimeStamps, pressureChannel.Values, postRegulatorChannel.Values, shifts)
 	default:
 		return nil, fmt.Errorf("unknown analysis mode: %s", analysisMode)
 	}
@@ -263,7 +275,7 @@ func (t *ShiftAnalysisTool) Execute(fragment *Backend.Data_fragment, params map[
 	}, nil
 }
 
-func detectShifts(times, rpm, gear, speed, longG, shiftRequest []float64, pressure *Backend.Fragment_channel,
+func detectShifts(times, rpm, gear, speed, longG, shiftRequest []float64, pressure, postRegulator *Backend.Fragment_channel,
 	minDuration, steadyWindow float64, gearRatios []float64) []ShiftEvent {
 
 	fmt.Printf("[detectShifts] Starting detection: %d samples, minDuration=%.3f, gearRatios=%v\n", len(times), minDuration, gearRatios)
@@ -275,6 +287,12 @@ func detectShifts(times, rpm, gear, speed, longG, shiftRequest []float64, pressu
 	if pressure != nil {
 		pressureVals = pressure.Values
 		fmt.Println("[detectShifts] Pressure data available")
+	}
+
+	postRegulatorVals := make([]float64, n)
+	if postRegulator != nil {
+		postRegulatorVals = postRegulator.Values
+		fmt.Println("[detectShifts] Post-regulator pressure data available")
 	}
 
 	// Shift request enum values:
@@ -474,29 +492,30 @@ func detectShifts(times, rpm, gear, speed, longG, shiftRequest []float64, pressu
 			len(shifts), preShiftMaxG, shiftMinG, gForceDrop, recoveryTime*1000)
 
 		shift := ShiftEvent{
-			Index:           len(shifts),
-			StartTime:       times[shiftRequestIdx], // Use shift request as true start
-			EndTime:         times[shiftEndIdx],
-			FromGear:        fromGear,
-			ToGear:          toGear,
-			IsUpshift:       isUpshift,
-			DeltaTReaction:  deltaTReaction,
-			DeltaTDuration:  deltaTDuration,
-			PreShiftRPM:     preShiftRPM,
-			PostShiftRPM:    postShiftRPM,
-			PeakRPM:         peakRPM,
-			RPMDrop:         math.Abs(postShiftRPM - preShiftRPM),
-			PreShiftSpeed:   preShiftSpeed,
-			PostShiftSpeed:  postShiftSpeed,
-			PneumaticPress:  pressureVals[shiftRequestIdx],
-			DeltaRPMError:   deltaRPMError,
-			ShiftEnergyLoss: energyLoss,
-			ShiftFailed:     shiftFailed,
-			GForceDrop:      gForceDrop,
-			PreShiftMaxG:    preShiftMaxG,
-			ShiftMinG:       shiftMinG,
-			RecoveryTime:    recoveryTime,
-			TotalShiftTime:  totalShiftTime,
+			Index:              len(shifts),
+			StartTime:          times[shiftRequestIdx],
+			EndTime:            times[shiftEndIdx],
+			FromGear:           fromGear,
+			ToGear:             toGear,
+			IsUpshift:          isUpshift,
+			DeltaTReaction:     deltaTReaction,
+			DeltaTDuration:     deltaTDuration,
+			PreShiftRPM:        preShiftRPM,
+			PostShiftRPM:       postShiftRPM,
+			PeakRPM:            peakRPM,
+			RPMDrop:            math.Abs(postShiftRPM - preShiftRPM),
+			PreShiftSpeed:      preShiftSpeed,
+			PostShiftSpeed:     postShiftSpeed,
+			PneumaticPress:     pressureVals[shiftRequestIdx],
+			PostRegulatorPress: postRegulatorVals[shiftRequestIdx],
+			DeltaRPMError:      deltaRPMError,
+			ShiftEnergyLoss:    energyLoss,
+			ShiftFailed:        shiftFailed,
+			GForceDrop:         gForceDrop,
+			PreShiftMaxG:       preShiftMaxG,
+			ShiftMinG:          shiftMinG,
+			RecoveryTime:       recoveryTime,
+			TotalShiftTime:     totalShiftTime,
 		}
 
 		shifts = append(shifts, shift)
@@ -718,6 +737,37 @@ func generatePressureCorrelation(shifts []ShiftEvent) (map[string]interface{}, e
 	return map[string]interface{}{
 		"scatter":   points,
 		"trendLine": trendLine,
+	}, nil
+}
+
+func generatePressureOverlay(times, tankPressure, postRegulatorPressure []float64, shifts []ShiftEvent) (map[string]interface{}, error) {
+	fmt.Println("[generatePressureOverlay] Generating pressure overlay")
+
+	type PressurePoint struct {
+		Time                 float64 `json:"time"`
+		ShiftTankPressure    float64 `json:"shiftTankPressure"`
+		PostRegulatorPressure float64 `json:"postRegulatorPressure"`
+	}
+
+	points := make([]PressurePoint, len(times))
+	for i, t := range times {
+		points[i] = PressurePoint{
+			Time:                  t,
+			ShiftTankPressure:     tankPressure[i],
+			PostRegulatorPressure: postRegulatorPressure[i],
+		}
+	}
+
+	shiftTimes := make([]float64, len(shifts))
+	for i, s := range shifts {
+		shiftTimes[i] = s.StartTime
+	}
+
+	fmt.Printf("[generatePressureOverlay] %d time points, %d shift markers\n", len(points), len(shiftTimes))
+
+	return map[string]interface{}{
+		"points":     points,
+		"shiftTimes": shiftTimes,
 	}, nil
 }
 
