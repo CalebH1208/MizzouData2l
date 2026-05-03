@@ -11,6 +11,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 )
 
 //go:embed all:frontend/dist
@@ -45,6 +46,16 @@ func main() {
 			Assets: assets,
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 0, A: 1},
+		Mac: &mac.Options{
+			TitleBar:   mac.TitleBarDefault(),
+			Appearance: mac.DefaultAppearance,
+			Preferences: &mac.Preferences{
+				FullscreenEnabled: mac.Enabled,
+			},
+			About: &mac.AboutInfo{
+				Title: "MizzouDataTool",
+			},
+		},
 		OnStartup: func(ctx context.Context) {
 			app.startup(ctx)
 			cloudStorage.SetContext(ctx)

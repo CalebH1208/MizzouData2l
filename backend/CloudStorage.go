@@ -470,6 +470,136 @@ func (cs *Cloud_storage) DownloadFile(cloudKey, localPath string) error {
 	return nil
 }
 
+// DownloadFolder recursively downloads all objects under cloudPrefix into localBasePath,
+// mirroring the folder structure. Returns immediately; each file emits the normal
+// transfer:progress / transfer:complete / transfer:error events, and a final
+// folder:download:complete event is emitted when all files have finished (or failed).
+func (cs *Cloud_storage) DownloadFolder(cloudPrefix, localBasePath string) error {
+	if !cs.IsConfigured() {
+		return fmt.Errorf("cloud storage not configured")
+	}
+	if cs.ctx == nil {
+		return fmt.Errorf("app context not ready")
+	}
+	if !strings.HasSuffix(cloudPrefix, "/") {
+		cloudPrefix += "/"
+	}
+
+	// Collect all files under the prefix by listing without a delimiter.
+	input := &s3.ListObjectsV2Input{
+		Bucket: aws.String(cs.config.BucketName),
+		Prefix: aws.String(cloudPrefix),
+	}
+	var allKeys []string
+	paginator := s3.NewListObjectsV2Paginator(cs.s3Client, input)
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(context.Background())
+		if err != nil {
+			return fmt.Errorf("failed to list folder contents: %w", err)
+		}
+		for _, obj := range page.Contents {
+			key := aws.ToString(obj.Key)
+			if strings.HasSuffix(key, "/") {
+				continue // skip directory placeholders
+			}
+			allKeys = append(allKeys, key)
+		}
+	}
+
+	if len(allKeys) == 0 {
+		runtime.EventsEmit(cs.ctx, "folder:download:complete", map[string]interface{}{
+			"prefix":     cloudPrefix,
+			"file_count": 0,
+		})
+		return nil
+	}
+
+	go func() {
+		completed := 0
+		failed := 0
+		for _, key := range allKeys {
+			// Strip the cloud prefix to get the relative path, then build local path.
+			rel := strings.TrimPrefix(key, cloudPrefix)
+			relNative := filepath.FromSlash(rel)
+			localPath := filepath.Join(localBasePath, relNative)
+
+			if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
+				failed++
+				runtime.EventsEmit(cs.ctx, "transfer:error", map[string]string{
+					"filename":  filepath.Base(localPath),
+					"direction": "download",
+					"error":     fmt.Sprintf("failed to create directory: %v", err),
+				})
+				continue
+			}
+
+			tmpPath := localPath + ".part"
+			f, err := os.Create(tmpPath)
+			if err != nil {
+				failed++
+				runtime.EventsEmit(cs.ctx, "transfer:error", map[string]string{
+					"filename":  filepath.Base(localPath),
+					"direction": "download",
+					"error":     fmt.Sprintf("failed to create file: %v", err),
+				})
+				continue
+			}
+
+			filename := filepath.Base(localPath)
+			listener := &downloadProgressListener{ctx: cs.ctx, filename: filename}
+
+			out, downloadErr := cs.tmClient.DownloadObject(context.Background(),
+				&transfermanager.DownloadObjectInput{
+					Bucket:   aws.String(cs.config.BucketName),
+					Key:      aws.String(key),
+					WriterAt: f,
+				},
+				func(o *transfermanager.Options) {
+					o.ObjectProgressListeners.Register(listener)
+				},
+			)
+			f.Close()
+			if downloadErr != nil {
+				_ = os.Remove(tmpPath)
+				failed++
+				runtime.EventsEmit(cs.ctx, "transfer:error", map[string]string{
+					"filename":  filename,
+					"direction": "download",
+					"error":     downloadErr.Error(),
+				})
+				continue
+			}
+			if err := os.Rename(tmpPath, localPath); err != nil {
+				_ = os.Remove(tmpPath)
+				failed++
+				runtime.EventsEmit(cs.ctx, "transfer:error", map[string]string{
+					"filename":  filename,
+					"direction": "download",
+					"error":     fmt.Sprintf("failed to finalize download: %v", err),
+				})
+				continue
+			}
+			etag := ""
+			if out != nil && out.ETag != nil {
+				etag = strings.Trim(*out.ETag, `"`)
+			}
+			cs.syncState.RecordDownload(key, localPath, etag)
+			runtime.EventsEmit(cs.ctx, "transfer:complete", map[string]string{
+				"filename":   filename,
+				"direction":  "download",
+				"local_path": localPath,
+			})
+			completed++
+		}
+		runtime.EventsEmit(cs.ctx, "folder:download:complete", map[string]interface{}{
+			"prefix":     cloudPrefix,
+			"file_count": completed,
+			"failed":     failed,
+		})
+	}()
+	return nil
+}
+
 // DeleteCloudFile deletes an S3 object.
 func (cs *Cloud_storage) DeleteCloudFile(key string) error {
 	if !cs.IsConfigured() {

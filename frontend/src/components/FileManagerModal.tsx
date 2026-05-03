@@ -9,10 +9,11 @@ import AlertModal from './AlertModal';
 import PromptModal from './PromptModal';
 import { LocalFileInfo, CloudFileInfo, ConflictInfo, SyncRecord } from './filemanager/types';
 import { useTransferState } from './filemanager/useTransferState';
-import { UploadFile, DownloadFile, CheckConflict, GetDisplayName, SyncFile, GetCloudFileMeta } from '../../wailsjs/go/Backend/Cloud_storage';
+import { UploadFile, DownloadFile, DownloadFolder, CheckConflict, GetDisplayName, SyncFile, GetCloudFileMeta } from '../../wailsjs/go/Backend/Cloud_storage';
 import { GetDataCacheDir } from '../../wailsjs/go/Backend/Local_file_manager';
 import { JoinLocalPath } from '../../wailsjs/go/Backend/Local_file_manager';
 import { GetDownloadRecord } from '../../wailsjs/go/Backend/Sync_state';
+import { EventsOn } from '../../wailsjs/runtime/runtime';
 
 interface Props {
   isOpen: boolean;
@@ -58,6 +59,16 @@ const FileManagerModal: React.FC<Props> = ({ isOpen, onClose, onOpenFile }) => {
       }
     },
   });
+
+  useEffect(() => {
+    const unsub = EventsOn('folder:download:complete', (data: { prefix: string; file_count: number; failed: number }) => {
+      setRefreshLocal((n) => n + 1);
+      if (data.failed > 0) {
+        showAlert('Folder Download', `Downloaded ${data.file_count} file(s) — ${data.failed} failed.`);
+      }
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     setHelpKey(isOpen ? 'file-manager' : null);
@@ -151,11 +162,24 @@ const FileManagerModal: React.FC<Props> = ({ isOpen, onClose, onOpenFile }) => {
 
   const handleDownload = useCallback(async (cloudItem?: CloudFileInfo) => {
     const item = cloudItem ?? cloudSelected?.item;
-    if (!item || item.is_dir || transferring) return;
+    if (!item || transferring) return;
 
     let localDir = localCurrentDir;
     if (!localDir) {
       try { localDir = await GetDataCacheDir(); } catch {}
+    }
+
+    // Folder download — mirror structure into a subfolder of localDir
+    if (item.is_dir) {
+      let localFolderPath: string;
+      try {
+        localFolderPath = await JoinLocalPath(localDir, item.name);
+      } catch {
+        localFolderPath = localDir + '/' + item.name;
+      }
+      startTransfer();
+      DownloadFolder(item.key, localFolderPath).catch((e) => showAlert('Download Failed', String(e)));
+      return;
     }
 
     let localPath: string;
@@ -264,7 +288,7 @@ const FileManagerModal: React.FC<Props> = ({ isOpen, onClose, onOpenFile }) => {
   if (!isOpen) return null;
 
   const canUpload = !transferring && !!localSelected && !localSelected.item.is_dir;
-  const canDownload = !transferring && !!cloudSelected && !cloudSelected.item.is_dir;
+  const canDownload = !transferring && !!cloudSelected;
   const hasSyncRecord = !!syncRecord && !!localSelected && !localSelected.item.is_dir;
   const isUpToDate = hasSyncRecord && syncStatus === 'uptodate';
   const isCloudNewer = hasSyncRecord && syncStatus === 'cloud-newer';
@@ -389,7 +413,7 @@ const FileManagerModal: React.FC<Props> = ({ isOpen, onClose, onOpenFile }) => {
           <button
             onClick={() => handleDownload()}
             disabled={!canDownload}
-            title="Download selected cloud file to local"
+            title={cloudSelected?.item.is_dir ? "Download folder (mirrors structure locally)" : "Download selected cloud file to local"}
             style={{
               ...transferBtn,
               opacity: canDownload ? 1 : 0.3,
