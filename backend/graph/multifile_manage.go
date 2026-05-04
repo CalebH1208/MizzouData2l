@@ -308,7 +308,7 @@ func (fg *Full_graph) LoadMultiFileMRTF(filePath string) error {
 		return fmt.Errorf("failed to read multi-file metadata: %w", err)
 	}
 
-	if metadata == nil || len(metadata) == 0 {
+	if len(metadata) == 0 {
 		return fmt.Errorf("no multi-file metadata found in file")
 	}
 
