@@ -5,13 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct
 type App struct {
-	ctx context.Context
+	ctx        context.Context
+	powerCurve *PowerCurveData
+	pcMutex    sync.RWMutex
 }
 
 // NewApp creates a new App application struct
@@ -132,6 +135,40 @@ func (a *App) WriteFile(filePath string, data []byte) error {
 // Greet returns a greeting for the given name
 func (a *App) Greet(name string) string {
 	return fmt.Sprintf("Hello %s, It's show time!", name)
+}
+
+func (a *App) OpenPowerCurveFileDialog() (string, error) {
+	options := runtime.OpenDialogOptions{
+		Title: "Select Dynojet Power Curve File",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Data Files (*.txt;*.csv)", Pattern: "*.txt;*.csv"},
+			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
+		},
+	}
+	return runtime.OpenFileDialog(a.ctx, options)
+}
+
+func (a *App) LoadPowerCurveFile(filePath string) error {
+	data, err := parsePowerCurveFile(filePath)
+	if err != nil {
+		return err
+	}
+	a.pcMutex.Lock()
+	a.powerCurve = data
+	a.pcMutex.Unlock()
+	return nil
+}
+
+func (a *App) GetPowerCurveData() *PowerCurveData {
+	a.pcMutex.RLock()
+	defer a.pcMutex.RUnlock()
+	return a.powerCurve
+}
+
+func (a *App) ClearPowerCurve() {
+	a.pcMutex.Lock()
+	a.powerCurve = nil
+	a.pcMutex.Unlock()
 }
 
 // OpenChannelManagerWindow opens a new window for the Channel Manager

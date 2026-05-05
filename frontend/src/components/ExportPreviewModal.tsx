@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useMemo } from 'react';
 import { toPng } from 'html-to-image';
 import { graph } from '../../wailsjs/go/models';
 import { SaveFileDialog, WriteFile } from '../../wailsjs/go/main/App';
@@ -11,6 +11,28 @@ interface Props {
   endTime: number;
   onClose: () => void;
 }
+
+interface AspectPreset {
+  label: string;
+  width: number;
+  height: number;
+}
+
+const ASPECT_PRESETS: AspectPreset[] = [
+  { label: '16:9 (Widescreen)', width: 1600, height: 900 },
+  { label: '16:9 Tall (Portrait)', width: 900, height: 1600 },
+  { label: '4:3 (Standard)', width: 1600, height: 1200 },
+  { label: '3:2', width: 1500, height: 1000 },
+  { label: '1:1 (Square)', width: 1200, height: 1200 },
+  { label: 'A0 Poster (landscape)', width: 3370, height: 2384 },
+  { label: 'A0 Poster (portrait)', width: 2384, height: 3370 },
+  { label: 'A1 Poster (landscape)', width: 2384, height: 1684 },
+  { label: 'A1 Poster (portrait)', width: 1684, height: 2384 },
+  { label: 'Custom', width: 0, height: 0 },
+];
+
+const MAX_PREVIEW_W = 720;
+const MAX_PREVIEW_H = 480;
 
 const ExportPreviewModal: React.FC<Props> = ({
   viewportData,
@@ -27,7 +49,29 @@ const ExportPreviewModal: React.FC<Props> = ({
   const [lightMode, setLightMode] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [presetIdx, setPresetIdx] = useState(0);
+  const [customWidth, setCustomWidth] = useState(EXPORT_WIDTH);
+  const [customHeight, setCustomHeight] = useState(EXPORT_HEIGHT);
+
   const captureRef = useRef<HTMLDivElement>(null);
+
+  const exportW = useMemo(() => {
+    if (presetIdx === ASPECT_PRESETS.length - 1) return customWidth;
+    return ASPECT_PRESETS[presetIdx].width;
+  }, [presetIdx, customWidth]);
+
+  const exportH = useMemo(() => {
+    if (presetIdx === ASPECT_PRESETS.length - 1) return customHeight;
+    return ASPECT_PRESETS[presetIdx].height;
+  }, [presetIdx, customHeight]);
+
+  // Scale preview to fit inside MAX_PREVIEW bounds
+  const previewScale = useMemo(() => {
+    const scaleW = MAX_PREVIEW_W / exportW;
+    const scaleH = MAX_PREVIEW_H / exportH;
+    return Math.min(scaleW, scaleH, 1);
+  }, [exportW, exportH]);
 
   const setGraphTitle = (index: number, value: string) => {
     setGraphTitles(prev => {
@@ -37,8 +81,13 @@ const ExportPreviewModal: React.FC<Props> = ({
     });
   };
 
-  // Scale factor to show a preview that fits comfortably in the modal
-  const PREVIEW_SCALE = 0.45;
+  const handlePresetChange = (idx: number) => {
+    setPresetIdx(idx);
+    if (idx !== ASPECT_PRESETS.length - 1) {
+      setCustomWidth(ASPECT_PRESETS[idx].width);
+      setCustomHeight(ASPECT_PRESETS[idx].height);
+    }
+  };
 
   const handleExport = async () => {
     if (!captureRef.current) return;
@@ -56,8 +105,8 @@ const ExportPreviewModal: React.FC<Props> = ({
         pixelRatio: 3,
         backgroundColor: lightMode ? '#ffffff' : '#000000',
         cacheBust: true,
-        width: EXPORT_WIDTH,
-        height: EXPORT_HEIGHT,
+        width: exportW,
+        height: exportH,
       });
 
       const base64 = dataUrl.split(',')[1];
@@ -75,6 +124,8 @@ const ExportPreviewModal: React.FC<Props> = ({
       setExporting(false);
     }
   };
+
+  const isCustom = presetIdx === ASPECT_PRESETS.length - 1;
 
   return (
     <div style={styles.overlay}>
@@ -119,6 +170,50 @@ const ExportPreviewModal: React.FC<Props> = ({
             </div>
           </div>
           <div style={styles.controlGroup}>
+            <label style={styles.label}>Aspect Ratio</label>
+            <select
+              style={styles.select}
+              value={presetIdx}
+              onChange={e => handlePresetChange(Number(e.target.value))}
+            >
+              {ASPECT_PRESETS.map((p, i) => (
+                <option key={i} value={i}>{p.label}</option>
+              ))}
+            </select>
+          </div>
+          {isCustom && (
+            <div style={styles.controlGroup}>
+              <label style={styles.label}>Dimensions (px)</label>
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                <input
+                  style={{ ...styles.input, width: '80px' }}
+                  type="number"
+                  min={100}
+                  max={10000}
+                  value={customWidth}
+                  onChange={e => setCustomWidth(Math.max(100, Number(e.target.value)))}
+                />
+                <span style={{ color: '#aaa' }}>×</span>
+                <input
+                  style={{ ...styles.input, width: '80px' }}
+                  type="number"
+                  min={100}
+                  max={10000}
+                  value={customHeight}
+                  onChange={e => setCustomHeight(Math.max(100, Number(e.target.value)))}
+                />
+              </div>
+            </div>
+          )}
+          {!isCustom && (
+            <div style={styles.controlGroup}>
+              <label style={styles.label}>Output Size</label>
+              <span style={{ color: '#ccc', fontSize: '13px', paddingTop: '6px' }}>
+                {exportW} × {exportH} px
+              </span>
+            </div>
+          )}
+          <div style={styles.controlGroup}>
             <label style={styles.checkLabel}>
               <input
                 type="checkbox"
@@ -131,17 +226,21 @@ const ExportPreviewModal: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* Preview area — the div we capture */}
-        <div style={styles.previewOuter}>
+        {/* Preview area */}
+        <div style={{
+          ...styles.previewOuter,
+          width: `${Math.round(exportW * previewScale)}px`,
+          height: `${Math.round(exportH * previewScale)}px`,
+        }}>
           <div
             style={{
-              transform: `scale(${PREVIEW_SCALE})`,
+              transform: `scale(${previewScale})`,
               transformOrigin: 'top left',
-              width: EXPORT_WIDTH,
-              height: EXPORT_HEIGHT,
+              width: exportW,
+              height: exportH,
             }}
           >
-            <div ref={captureRef} style={{ width: EXPORT_WIDTH, height: EXPORT_HEIGHT, background: lightMode ? '#ffffff' : '#000000' }}>
+            <div ref={captureRef} style={{ width: exportW, height: exportH, background: lightMode ? '#ffffff' : '#000000' }}>
               <GraphExportRenderer
                 viewportData={viewportData}
                 showLegend={true}
@@ -149,6 +248,8 @@ const ExportPreviewModal: React.FC<Props> = ({
                 chartTitle={chartTitle}
                 graphTitles={graphTitles}
                 lightMode={lightMode}
+                exportWidth={exportW}
+                exportHeight={exportH}
               />
             </div>
           </div>
@@ -261,8 +362,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     overflow: 'hidden',
     border: '1px solid #333',
     borderRadius: '4px',
-    width: `${EXPORT_WIDTH * 0.45}px`,
-    height: `${EXPORT_HEIGHT * 0.45}px`,
     flexShrink: 0,
   },
   error: {

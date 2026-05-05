@@ -329,6 +329,20 @@ func (fg *Full_graph) RegenerateChannelColor(channelName string) error {
 	return nil
 }
 
+// SetChannelColor sets an explicit hex color (#RRGGBB) for a channel.
+func (fg *Full_graph) SetChannelColor(channelName string, hexColor string) error {
+	fg.mutex.Lock()
+	defer fg.mutex.Unlock()
+
+	channel, exists := fg.ViewableChannels[channelName]
+	if !exists {
+		return fmt.Errorf("channel %s not found", channelName)
+	}
+
+	channel.Color = hexColor
+	return nil
+}
+
 func (fg *Full_graph) RemoveGraph(graphIndex int) error {
 	fg.mutex.Lock()
 	defer fg.mutex.Unlock()

@@ -289,11 +289,17 @@ const TuneGraph: React.FC<TuneGraphProps> = ({ width: propWidth, height: propHei
   useEffect(() => {
     if (cursorTime === null) {
       setCursorData(null);
+      EventsEmit('cursor-update', null);
       return;
     }
 
     throttledLoadCursorData();
   }, [cursorTime, throttledLoadCursorData]);
+
+  // Emit cursor channel data to other components (e.g. PowerCurvePanel)
+  useEffect(() => {
+    EventsEmit('cursor-update', cursorData);
+  }, [cursorData]);
 
   // Track pending viewport restore (for preset loading)
   const pendingViewportRestore = useRef<{ start: number; end: number } | null>(null);

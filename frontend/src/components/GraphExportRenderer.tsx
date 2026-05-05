@@ -2,7 +2,7 @@ import React, { useRef, useEffect } from 'react';
 import * as d3 from 'd3';
 import { graph } from '../../wailsjs/go/models';
 
-// Fixed export canvas dimensions (16:9, slide-friendly)
+// Default export canvas dimensions (16:9, slide-friendly)
 export const EXPORT_WIDTH = 1600;
 export const EXPORT_HEIGHT = 900;
 
@@ -13,19 +13,23 @@ interface Props {
   chartTitle: string;
   graphTitles: string[];
   lightMode: boolean;
+  exportWidth?: number;
+  exportHeight?: number;
 }
 
 const MARGIN = { top: 50, right: 40, bottom: 60, left: 70 };
 const FONT = 'monospace';
 
-// Legend rendered as a vertical stack overlaid in the top-left of each graph plot area
 const LEGEND_ITEM_HEIGHT = 18;
 const LEGEND_SWATCH = 12;
 const LEGEND_PAD_X = 8;
 const LEGEND_PAD_Y = 6;
 
-const GraphExportRenderer: React.FC<Props> = ({ viewportData, showLegend, showGridlines, chartTitle, graphTitles, lightMode }) => {
+const GraphExportRenderer: React.FC<Props> = ({ viewportData, showLegend, showGridlines, chartTitle, graphTitles, lightMode, exportWidth, exportHeight }) => {
   const svgRef = useRef<SVGSVGElement>(null);
+
+  const W = exportWidth ?? EXPORT_WIDTH;
+  const H = exportHeight ?? EXPORT_HEIGHT;
 
   useEffect(() => {
     if (!svgRef.current || !viewportData || viewportData.graphs.length === 0) return;
@@ -36,8 +40,6 @@ const GraphExportRenderer: React.FC<Props> = ({ viewportData, showLegend, showGr
     const GRID_COLOR = lightMode ? '#cccccc' : '#333333';
     const LEGEND_BG = lightMode ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.45)';
 
-    // In light mode, darken channel colors so they remain legible on white.
-    // We multiply the RGB channels by 0.45 to push any light/pastel color to a dark version.
     const adaptColor = (hex: string): string => {
       if (!lightMode) return hex;
       try {
@@ -56,18 +58,17 @@ const GraphExportRenderer: React.FC<Props> = ({ viewportData, showLegend, showGr
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
 
-    // Background
     svg.append('rect')
-      .attr('width', EXPORT_WIDTH)
-      .attr('height', EXPORT_HEIGHT)
+      .attr('width', W)
+      .attr('height', H)
       .attr('fill', BG);
 
     const numGraphs = viewportData.graphs.length;
     const titleHeight = 36;
     const topPad = MARGIN.top + titleHeight;
 
-    const chartHeight = EXPORT_HEIGHT - topPad - MARGIN.bottom;
-    const chartWidth = EXPORT_WIDTH - MARGIN.left - MARGIN.right;
+    const chartHeight = H - topPad - MARGIN.bottom;
+    const chartWidth = W - MARGIN.left - MARGIN.right;
     const graphHeight = chartHeight / numGraphs;
     const graphSpacing = 8;
 
@@ -78,9 +79,8 @@ const GraphExportRenderer: React.FC<Props> = ({ viewportData, showLegend, showGr
       .domain([viewportStart, viewportEnd])
       .range([0, chartWidth]);
 
-    // Overall chart title
     svg.append('text')
-      .attr('x', EXPORT_WIDTH / 2)
+      .attr('x', W / 2)
       .attr('y', MARGIN.top + 22)
       .attr('text-anchor', 'middle')
       .attr('fill', LABEL_COLOR)
@@ -89,7 +89,6 @@ const GraphExportRenderer: React.FC<Props> = ({ viewportData, showLegend, showGr
       .attr('font-weight', 'bold')
       .text(chartTitle);
 
-    // File boundary alternating backgrounds (multi-file)
     if (viewportData.fileMetadataList && viewportData.fileMetadataList.length > 0) {
       viewportData.fileMetadataList.forEach((file, fileIdx) => {
         const fileStart = file.adjustedStart;
@@ -108,7 +107,6 @@ const GraphExportRenderer: React.FC<Props> = ({ viewportData, showLegend, showGr
       });
     }
 
-    // Clip path for chart area
     svg.append('defs')
       .append('clipPath')
       .attr('id', 'export-clip')
@@ -127,7 +125,6 @@ const GraphExportRenderer: React.FC<Props> = ({ viewportData, showLegend, showGr
       const clipped = g.append('g').attr('clip-path', 'url(#export-clip)');
 
       if (graph.useSplitAxis) {
-        // Split axis: each channel normalized to [0,1]
         const normScale = d3.scaleLinear().domain([0, 1]).range([gHeight, 0]);
 
         graph.channels.forEach((channel, channelIdx) => {
@@ -149,7 +146,6 @@ const GraphExportRenderer: React.FC<Props> = ({ viewportData, showLegend, showGr
             .attr('stroke-width', 1.5)
             .attr('d', line);
 
-          // Per-channel Y axis (alternating left/right)
           const channelYScale = d3.scaleLinear().domain([yMin, yMax]).range([gHeight, 0]);
           const isLeft = channelIdx % 2 === 0;
           const axisGen = isLeft ? d3.axisLeft(channelYScale) : d3.axisRight(channelYScale);
@@ -164,7 +160,6 @@ const GraphExportRenderer: React.FC<Props> = ({ viewportData, showLegend, showGr
             .style('font-family', FONT);
         });
       } else {
-        // Unified axis
         const allValues = graph.channels.flatMap(c => c.values.filter(v => !isNaN(v) && isFinite(v)));
         const [yMin, yMax] = graph.yRange && (graph.yRange[1] - graph.yRange[0]) !== 0
           ? graph.yRange
@@ -197,7 +192,6 @@ const GraphExportRenderer: React.FC<Props> = ({ viewportData, showLegend, showGr
             .attr('d', line);
         });
 
-        // Unified Y axis with optional unit label
         const unitLabel = graph.channels.length === 1 ? graph.channels[0].unit : '';
         g.append('g')
           .call(d3.axisLeft(yScale).ticks(5))
@@ -219,7 +213,6 @@ const GraphExportRenderer: React.FC<Props> = ({ viewportData, showLegend, showGr
         }
       }
 
-      // Per-graph title (editable via graphTitles prop)
       const gTitle = graphTitles[graphIndex] ?? (graph.title || `Graph ${graphIndex + 1}`);
       g.append('text')
         .attr('x', chartWidth / 2)
@@ -232,22 +225,19 @@ const GraphExportRenderer: React.FC<Props> = ({ viewportData, showLegend, showGr
         .attr('opacity', 1)
         .text(gTitle);
 
-      // Legend: vertical stack overlaid in top-left of plot area, clipped to graph
       if (showLegend && graph.channels.length > 0) {
         const legendGroup = g.append('g')
           .attr('clip-path', 'url(#export-clip)');
 
         const legendBgHeight = LEGEND_PAD_Y * 2 + graph.channels.length * LEGEND_ITEM_HEIGHT;
-        // Estimate max label width (rough char width at 13px monospace ≈ 8px/char)
         const maxLabelLen = Math.max(...graph.channels.map(c =>
           (c.name + (c.unit ? ` (${c.unit})` : '')).length
         ));
         const legendBgWidth = LEGEND_PAD_X * 2 + LEGEND_SWATCH + 6 + maxLabelLen * 8;
 
-        // Semi-transparent background pill
         legendGroup.append('rect')
           .attr('x', LEGEND_PAD_X)
-          .attr('y', 24) // below the graph title
+          .attr('y', 24)
           .attr('width', legendBgWidth)
           .attr('height', legendBgHeight)
           .attr('fill', LEGEND_BG)
@@ -273,7 +263,6 @@ const GraphExportRenderer: React.FC<Props> = ({ viewportData, showLegend, showGr
         });
       }
 
-      // Divider between graphs
       if (graphIndex < numGraphs - 1) {
         g.append('line')
           .attr('x1', 0).attr('x2', chartWidth)
@@ -284,7 +273,6 @@ const GraphExportRenderer: React.FC<Props> = ({ viewportData, showLegend, showGr
       }
     });
 
-    // File boundary dividers + labels
     if (viewportData.fileBoundaryIndices && viewportData.fileBoundaryIndices.length > 0) {
       const vLines = svg.append('g')
         .attr('clip-path', 'url(#export-clip)')
@@ -314,7 +302,6 @@ const GraphExportRenderer: React.FC<Props> = ({ viewportData, showLegend, showGr
       });
     }
 
-    // X axis
     const xAxisGroup = svg.append('g')
       .attr('transform', `translate(${MARGIN.left}, ${topPad + chartHeight})`);
 
@@ -327,23 +314,22 @@ const GraphExportRenderer: React.FC<Props> = ({ viewportData, showLegend, showGr
     xAxisGroup.select('.domain').style('stroke', AXIS_COLOR);
     xAxisGroup.selectAll('.tick line').style('stroke', AXIS_COLOR);
 
-    // X axis label
     svg.append('text')
       .attr('x', MARGIN.left + chartWidth / 2)
-      .attr('y', EXPORT_HEIGHT - 10)
+      .attr('y', H - 10)
       .attr('text-anchor', 'middle')
       .attr('fill', LABEL_COLOR)
       .attr('font-size', '14px')
       .attr('font-family', FONT)
       .text('Time (s)');
 
-  }, [viewportData, showLegend, showGridlines, chartTitle, graphTitles, lightMode]);
+  }, [viewportData, showLegend, showGridlines, chartTitle, graphTitles, lightMode, W, H]);
 
   return (
     <svg
       ref={svgRef}
-      width={EXPORT_WIDTH}
-      height={EXPORT_HEIGHT}
+      width={W}
+      height={H}
       style={{ display: 'block', background: lightMode ? '#ffffff' : '#000000' }}
     />
   );
