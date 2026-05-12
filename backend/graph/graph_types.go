@@ -16,9 +16,10 @@ type Full_graph struct {
 
 	ViewableChannels map[string]*Data_channel
 
-	IsMultiFile    bool
-	FileMetadata   []types.File_metadata
-	FileBoundaries []float64
+	IsMultiFile          bool
+	FileMetadata         []types.File_metadata
+	FileBoundaries       []float64
+	OriginalFileMetadata []types.File_metadata // session snapshot for ResetToOriginal (not persisted)
 
 	CursorPos        float64
 	BreakLines       []float64

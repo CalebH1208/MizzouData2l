@@ -20,7 +20,9 @@ type KPI_search struct {
 	ctx        context.Context
 	tagManager *Tag_manager
 	localFiles *Local_file_manager
-	fullGraph  interface{ InitializeFromMultipleFiles([]string) ([]string, error) }
+	fullGraph  interface {
+		InitializeFromMultipleFiles(string, []string) ([]string, error)
+	}
 	mutex      sync.Mutex
 	cancelChan chan struct{}
 }
@@ -36,7 +38,9 @@ func (ks *KPI_search) SetContext(ctx context.Context) {
 	ks.ctx = ctx
 }
 
-func (ks *KPI_search) SetFullGraph(fg interface{ InitializeFromMultipleFiles([]string) ([]string, error) }) {
+func (ks *KPI_search) SetFullGraph(fg interface {
+		InitializeFromMultipleFiles(string, []string) ([]string, error)
+	}) {
 	ks.fullGraph = fg
 }
 
@@ -521,7 +525,7 @@ func (ks *KPI_search) LoadSearchResult(resultInfoPath string) ([]string, error) 
 		return nil, fmt.Errorf("full graph not available")
 	}
 
-	return ks.fullGraph.InitializeFromMultipleFiles(info.Segments)
+	return ks.fullGraph.InitializeFromMultipleFiles(info.Name, info.Segments)
 }
 
 func (ks *KPI_search) emitProgress(phase string, fileIndex, fileCount int, fileName string, percent float64) {

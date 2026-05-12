@@ -78,6 +78,7 @@ const MultiFileManager: React.FC<MultiFileManagerProps> = ({ isOpen, onClose }) 
       }
 
       let allFilePaths: string[] = [];
+      let datasetName = '';
 
       if (isMultiFile && files.length > 0) {
         const existingPaths = files.map(f => (f as any).originalPath || f.originalName);
@@ -85,10 +86,12 @@ const MultiFileManager: React.FC<MultiFileManagerProps> = ({ isOpen, onClose }) 
         console.log('[MultiFileManager] Appending files to existing dataset:', newFilePaths);
       } else {
         allFilePaths = newFilePaths;
+        const first = newFilePaths[0].split(/[\\/]/).pop() || newFilePaths[0];
+        datasetName = first.replace(/\.[^.]+$/, '') + '_merged';
         console.log('[MultiFileManager] Loading files:', newFilePaths);
       }
 
-      const warningMessages = await InitializeFromMultipleFiles(allFilePaths);
+      const warningMessages = await InitializeFromMultipleFiles(datasetName, allFilePaths);
 
       setWarnings(warningMessages || []);
 

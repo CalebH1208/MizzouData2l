@@ -307,30 +307,8 @@ func (fg *Full_graph) reapplyDeleteSegment(seg types.Deleted_segment, segmentInd
 		seg.FileBoundariesSnapshot = make([]float64, len(fg.FileBoundaries))
 		copy(seg.FileBoundariesSnapshot, fg.FileBoundaries)
 
-		shift := removedDuration - 0.01
-		for i := range fg.FileMetadata {
-			if fg.FileMetadata[i].AdjustedStart > seg.StartTime && fg.FileMetadata[i].AdjustedStart <= seg.EndTime {
-				fg.FileMetadata[i].AdjustedStart = seg.StartTime
-			} else if fg.FileMetadata[i].AdjustedStart > seg.EndTime {
-				fg.FileMetadata[i].AdjustedStart -= shift
-			}
-			if fg.FileMetadata[i].AdjustedEnd > seg.StartTime && fg.FileMetadata[i].AdjustedEnd <= seg.EndTime {
-				fg.FileMetadata[i].AdjustedEnd = seg.StartTime
-			} else if fg.FileMetadata[i].AdjustedEnd > seg.EndTime {
-				fg.FileMetadata[i].AdjustedEnd -= shift
-			}
-		}
-		newBoundaries := fg.FileBoundaries[:0]
-		for _, b := range fg.FileBoundaries {
-			if b > seg.StartTime && b <= seg.EndTime {
-				// consumed by deletion
-			} else if b > seg.EndTime {
-				newBoundaries = append(newBoundaries, b-shift)
-			} else {
-				newBoundaries = append(newBoundaries, b)
-			}
-		}
-		fg.FileBoundaries = newBoundaries
+		fg.subtractDeletedPointsFromFiles(startIdx, endIdx)
+		fg.recomputeMultiFileBoundaries()
 	}
 
 	// Write updated snapshots back so a subsequent undo has accurate state

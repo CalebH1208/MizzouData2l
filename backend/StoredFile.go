@@ -30,6 +30,13 @@ type Basic_telemetry_file struct {
 	// OriginalChannels holds the full-resolution data from the very first import.
 	// Written once to the ORIG section and never overwritten by subsequent saves.
 	OriginalChannels map[string]types.Stored_channel
+
+	// MultiFileMeta / MultiFileOrig carry the MFMD / MFO2 trailer of a multi-file
+	// MRTF that was loaded for editing, so a re-save (e.g. after a unit rename in the
+	// validation UI) can re-append it instead of silently demoting the file to a
+	// plain single-file MRTF. Empty when the loaded file was not a multi-file dataset.
+	MultiFileMeta []types.File_metadata
+	MultiFileOrig []types.File_metadata
 }
 
 func WriteString(w io.Writer, s string) error {
@@ -122,6 +129,8 @@ func (B *Basic_telemetry_file) LogFile_to_BTF() {
 	B.DeletedSegments = nil
 	B.ChangeLog = nil
 	B.TimeMutations = nil
+	B.MultiFileMeta = nil
+	B.MultiFileOrig = nil
 
 	// Count validated channels
 	validatedChannels := make([]Telemetry_channel, 0)
@@ -164,6 +173,108 @@ func (B *Basic_telemetry_file) LogFile_to_BTF() {
 		B.Parser.Channels[i].Data = nil
 		B.Parser.Channels[i].OriginalData = nil
 	}
+}
+
+// AppendMultiFileMetadata appends the MFMD (edited) and MFO2 (original) per-file
+// metadata blocks to DATACACHE/<name>.MRTF. Call after Write_BTF, which truncates and
+// rewrites the base file. If original is empty it falls back to a copy of edited.
+func (B *Basic_telemetry_file) AppendMultiFileMetadata(name string, edited, original []types.File_metadata) error {
+	if len(edited) == 0 {
+		return nil
+	}
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %w", err)
+	}
+	filePath := filepath.Join(filepath.Dir(exePath), "DATACACHE", name+".MRTF")
+	f, err := os.OpenFile(filePath, os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open file for appending metadata: %w", err)
+	}
+	defer f.Close()
+
+	writeBlock := func(tag string, list []types.File_metadata) error {
+		if _, err := f.Write([]byte(tag)); err != nil {
+			return err
+		}
+		if err := binary.Write(f, binary.LittleEndian, uint32(len(list))); err != nil {
+			return err
+		}
+		for _, m := range list {
+			if err := WriteFileMetadataRecord(f, m); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if err := writeBlock("MFMD", edited); err != nil {
+		return err
+	}
+	if len(original) == 0 {
+		original = edited
+	}
+	return writeBlock("MFO2", original)
+}
+
+// SaveValidatedData writes the current parser channels to DATACACHE/<name>.MRTF, the
+// same as LogFile_to_BTF + Write_BTF, but if srcPath points at an MRTF that carried
+// notes / reset-data / a multi-file trailer, those are preserved so a unit rename (or
+// any other validation tweak) doesn't silently demote the file to a plain single-file
+// MRTF. srcPath may be empty for a fresh CSV import.
+func (B *Basic_telemetry_file) SaveValidatedData(srcPath string) error {
+	// Snapshot the extension sections of the source file *before* LogFile_to_BTF wipes
+	// the in-memory BTF. We re-read from disk rather than trusting in-memory state so
+	// this is robust to the shared singleton being reused across loads.
+	var (
+		notes     []types.Note_entry
+		deleted   []types.Deleted_segment
+		mutations []types.TimeMutation
+		origCh    map[string]types.Stored_channel
+		mfMeta    []types.File_metadata
+		mfOrig    []types.File_metadata
+	)
+	if srcPath != "" {
+		if _, statErr := os.Stat(srcPath); statErr == nil {
+			src := New_BTF(nil)
+			if err := src.Read_BTF(srcPath); err == nil {
+				notes = src.Notes
+				deleted = src.DeletedSegments
+				mutations = src.TimeMutations
+				origCh = src.OriginalChannels
+				mfMeta = src.MultiFileMeta
+				mfOrig = src.MultiFileOrig
+			}
+		}
+	}
+
+	B.LogFile_to_BTF()
+
+	// Re-inject preserved sections. For OriginalChannels, refresh the unit to match the
+	// (possibly renamed) validated channel so "Reset to Original" keeps the new unit.
+	if len(origCh) > 0 {
+		for chName, sc := range origCh {
+			if cur, ok := B.Channels[chName]; ok {
+				sc.Unit = cur.Unit
+				origCh[chName] = sc
+			}
+		}
+		B.OriginalChannels = origCh
+	}
+	B.Notes = notes
+	B.DeletedSegments = deleted
+	B.TimeMutations = mutations
+
+	if err := B.Write_BTF(true); err != nil {
+		return err
+	}
+
+	if len(mfMeta) > 0 {
+		if err := B.AppendMultiFileMetadata(B.Name, mfMeta, mfOrig); err != nil {
+			return fmt.Errorf("failed to re-append multi-file metadata: %w", err)
+		}
+	}
+	return nil
 }
 
 func (B *Basic_telemetry_file) Write_BTF(overwrite bool) error {
@@ -462,6 +573,8 @@ func (B *Basic_telemetry_file) Read_BTF(filepath string) error {
 	B.DeletedSegments = nil
 	B.ChangeLog = nil
 	B.TimeMutations = nil
+	B.MultiFileMeta = nil
+	B.MultiFileOrig = nil
 
 	f, err := os.Open(filepath)
 	if err != nil {
@@ -785,154 +898,227 @@ func (B *Basic_telemetry_file) Read_BTF(filepath string) error {
 	}
 doneScanning:
 
+	// Capture the multi-file trailer (if any) so a re-save can preserve it. Errors here
+	// are non-fatal — a malformed/absent trailer just means "not a multi-file dataset".
+	if meta, orig, mferr := B.ReadMultiFileMetadata(filepath); mferr == nil {
+		B.MultiFileMeta = meta
+		B.MultiFileOrig = orig
+	}
+
 	return nil
 }
 
-func (B *Basic_telemetry_file) ReadMultiFileMetadata(filepath string) ([]types.File_metadata, error) {
+// WriteFileMetadataRecord serializes one File_metadata record. The list-level count
+// is written by the caller; this writes only the record body.
+func WriteFileMetadataRecord(w io.Writer, meta types.File_metadata) error {
+	if err := WriteString(w, meta.ID); err != nil {
+		return err
+	}
+	if err := WriteString(w, meta.OriginalPath); err != nil {
+		return err
+	}
+	if err := WriteString(w, meta.OriginalName); err != nil {
+		return err
+	}
+	if err := WriteString(w, meta.DisplayName); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, meta.OriginalStart); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, meta.OriginalEnd); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, meta.AdjustedStart); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, meta.AdjustedEnd); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, meta.TimeOffset); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, uint32(meta.DataPointCount)); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, uint32(len(meta.ChannelNames))); err != nil {
+		return err
+	}
+	for _, chName := range meta.ChannelNames {
+		if err := WriteString(w, chName); err != nil {
+			return err
+		}
+	}
+	return binary.Write(w, binary.LittleEndian, uint32(meta.Order))
+}
+
+func readFileMetadataRecord(r io.Reader, maxRemaining int64) (types.File_metadata, error) {
+	var meta types.File_metadata
+	var err error
+	rs := func() (string, error) { return readStringBounded(r, maxRemaining) }
+	if meta.ID, err = rs(); err != nil {
+		return meta, err
+	}
+	if meta.OriginalPath, err = rs(); err != nil {
+		return meta, err
+	}
+	if meta.OriginalName, err = rs(); err != nil {
+		return meta, err
+	}
+	if meta.DisplayName, err = rs(); err != nil {
+		return meta, err
+	}
+	if err = binary.Read(r, binary.LittleEndian, &meta.OriginalStart); err != nil {
+		return meta, err
+	}
+	if err = binary.Read(r, binary.LittleEndian, &meta.OriginalEnd); err != nil {
+		return meta, err
+	}
+	if err = binary.Read(r, binary.LittleEndian, &meta.AdjustedStart); err != nil {
+		return meta, err
+	}
+	if err = binary.Read(r, binary.LittleEndian, &meta.AdjustedEnd); err != nil {
+		return meta, err
+	}
+	if err = binary.Read(r, binary.LittleEndian, &meta.TimeOffset); err != nil {
+		return meta, err
+	}
+	var dataPointCount, channelCount, order uint32
+	if err = binary.Read(r, binary.LittleEndian, &dataPointCount); err != nil {
+		return meta, err
+	}
+	if err = binary.Read(r, binary.LittleEndian, &channelCount); err != nil {
+		return meta, err
+	}
+	if maxRemaining > 0 && int64(channelCount) > maxRemaining {
+		return meta, fmt.Errorf("implausible channel count %d in multi-file metadata", channelCount)
+	}
+	meta.ChannelNames = make([]string, channelCount)
+	for j := uint32(0); j < channelCount; j++ {
+		if meta.ChannelNames[j], err = rs(); err != nil {
+			return meta, err
+		}
+	}
+	if err = binary.Read(r, binary.LittleEndian, &order); err != nil {
+		return meta, err
+	}
+	meta.DataPointCount = int(dataPointCount)
+	meta.Order = int(order)
+	return meta, nil
+}
+
+// maxMultiFileCount bounds the number of file records we'll trust from a metadata
+// block, guarding against a false MFMD/MFO2 magic match inside binary channel data.
+const maxMultiFileCount = 4096
+
+func readFileMetadataList(r io.Reader, maxRemaining int64) ([]types.File_metadata, error) {
+	var count uint32
+	if err := binary.Read(r, binary.LittleEndian, &count); err != nil {
+		return nil, err
+	}
+	if count > maxMultiFileCount {
+		return nil, fmt.Errorf("implausible multi-file count %d (likely a false metadata-magic match)", count)
+	}
+	list := make([]types.File_metadata, count)
+	for i := uint32(0); i < count; i++ {
+		rec, err := readFileMetadataRecord(r, maxRemaining)
+		if err != nil {
+			return nil, err
+		}
+		list[i] = rec
+	}
+	return list, nil
+}
+
+// findLastMFMDOffset scans the tail of the file (bounded) for the last occurrence of
+// the "MFMD" magic and returns its absolute offset, or -1 if not found. It reads in
+// overlapping chunks instead of byte-by-byte so a large non-multi-file MRTF doesn't
+// take O(filesize) syscalls.
+func findLastMFMDOffset(f *os.File, fileSize int64) (int64, error) {
+	const maxTailScan = int64(16 << 20) // 16 MiB — far more than any plausible metadata trailer
+	const chunkSize = int64(1 << 20)    // 1 MiB
+	needle := []byte("MFMD")
+	overlap := int64(len(needle) - 1)
+
+	scanFrom := fileSize - maxTailScan
+	if scanFrom < 4 { // keep past the 4-byte MRTF header
+		scanFrom = 4
+	}
+
+	best := int64(-1)
+	for pos := scanFrom; pos < fileSize; {
+		end := pos + chunkSize
+		if end > fileSize {
+			end = fileSize
+		}
+		buf := make([]byte, end-pos)
+		if _, err := f.ReadAt(buf, pos); err != nil && err != io.EOF {
+			return -1, err
+		}
+		if rel := bytes.LastIndex(buf, needle); rel >= 0 {
+			best = pos + int64(rel)
+		}
+		if end == fileSize {
+			break
+		}
+		pos = end - overlap
+	}
+	return best, nil
+}
+
+// ReadMultiFileMetadata locates the trailing MFMD block (the edited per-file metadata)
+// and, if present, the MFO2 block that immediately follows it (the original pre-edit
+// per-file metadata, written by format v2). Returns (edited, original, error). For v1
+// files that only have MFMD, original is nil and callers should fall back to edited.
+func (B *Basic_telemetry_file) ReadMultiFileMetadata(filepath string) ([]types.File_metadata, []types.File_metadata, error) {
 	f, err := os.Open(filepath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer f.Close()
 
 	fileInfo, err := f.Stat()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	magic := make([]byte, 4)
 	if _, err := io.ReadFull(f, magic); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if string(magic) != "MRTF" {
-		return nil, errors.New("not an MRTF file")
+		return nil, nil, errors.New("not an MRTF file")
 	}
 
-	offset := int64(fileInfo.Size() - 4)
-	if offset < 0 {
-		return nil, nil
+	mfmdOffset, err := findLastMFMDOffset(f, fileInfo.Size())
+	if err != nil {
+		return nil, nil, err
+	}
+	if mfmdOffset < 0 {
+		return nil, nil, nil // no multi-file metadata — caller treats as a plain single file
 	}
 
-	if _, err := f.Seek(offset, 0); err != nil {
-		return nil, err
+	fileSize := fileInfo.Size()
+	if _, err := f.Seek(mfmdOffset+4, 0); err != nil {
+		return nil, nil, err
+	}
+	edited, err := readFileMetadataList(f, fileSize-(mfmdOffset+4))
+	if err != nil {
+		return nil, nil, fmt.Errorf("multi-file metadata block is malformed: %w", err)
 	}
 
-	mfmdMagic := make([]byte, 4)
-	n, err := f.Read(mfmdMagic)
-	if err != nil || n != 4 {
-		return nil, nil
-	}
-
-	foundMFMD := false
-	for offset >= 0 {
-		if string(mfmdMagic) == "MFMD" {
-			foundMFMD = true
-			break
-		}
-
-		offset -= 1
-		if offset < 0 {
-			break
-		}
-
-		if _, err := f.Seek(offset, 0); err != nil {
-			return nil, nil
-		}
-
-		n, err := f.Read(mfmdMagic)
-		if err != nil || n != 4 {
-			return nil, nil
+	// Optional MFO2 block immediately after MFMD: original (pre-edit) metadata.
+	var original []types.File_metadata
+	tag := make([]byte, 4)
+	if n, rerr := f.Read(tag); rerr == nil && n == 4 && string(tag) == "MFO2" {
+		pos, _ := f.Seek(0, io.SeekCurrent)
+		if original, err = readFileMetadataList(f, fileSize-pos); err != nil {
+			return nil, nil, fmt.Errorf("original-metadata block is malformed: %w", err)
 		}
 	}
 
-	if !foundMFMD {
-		return nil, nil
-	}
-
-	if _, err := f.Seek(offset+4, 0); err != nil {
-		return nil, err
-	}
-
-	var fileCount uint32
-	if err := binary.Read(f, binary.LittleEndian, &fileCount); err != nil {
-		return nil, err
-	}
-
-	fileMetadata := make([]types.File_metadata, fileCount)
-	for i := uint32(0); i < fileCount; i++ {
-		id, err := readString(f)
-		if err != nil {
-			return nil, err
-		}
-		originalPath, err := readString(f)
-		if err != nil {
-			return nil, err
-		}
-		originalName, err := readString(f)
-		if err != nil {
-			return nil, err
-		}
-		displayName, err := readString(f)
-		if err != nil {
-			return nil, err
-		}
-
-		var originalStart, originalEnd, adjustedStart, adjustedEnd, timeOffset float64
-		if err := binary.Read(f, binary.LittleEndian, &originalStart); err != nil {
-			return nil, err
-		}
-		if err := binary.Read(f, binary.LittleEndian, &originalEnd); err != nil {
-			return nil, err
-		}
-		if err := binary.Read(f, binary.LittleEndian, &adjustedStart); err != nil {
-			return nil, err
-		}
-		if err := binary.Read(f, binary.LittleEndian, &adjustedEnd); err != nil {
-			return nil, err
-		}
-		if err := binary.Read(f, binary.LittleEndian, &timeOffset); err != nil {
-			return nil, err
-		}
-
-		var dataPointCount, channelCount, order uint32
-		if err := binary.Read(f, binary.LittleEndian, &dataPointCount); err != nil {
-			return nil, err
-		}
-		if err := binary.Read(f, binary.LittleEndian, &channelCount); err != nil {
-			return nil, err
-		}
-
-		channelNames := make([]string, channelCount)
-		for j := uint32(0); j < channelCount; j++ {
-			chName, err := readString(f)
-			if err != nil {
-				return nil, err
-			}
-			channelNames[j] = chName
-		}
-
-		if err := binary.Read(f, binary.LittleEndian, &order); err != nil {
-			return nil, err
-		}
-
-		fileMetadata[i] = types.File_metadata{
-			ID:             id,
-			OriginalPath:   originalPath,
-			OriginalName:   originalName,
-			DisplayName:    displayName,
-			OriginalStart:  originalStart,
-			OriginalEnd:    originalEnd,
-			AdjustedStart:  adjustedStart,
-			AdjustedEnd:    adjustedEnd,
-			TimeOffset:     timeOffset,
-			DataPointCount: int(dataPointCount),
-			ChannelNames:   channelNames,
-			Order:          int(order),
-		}
-	}
-
-	fmt.Printf("[ReadMultiFileMetadata] Read metadata for %d files\n", fileCount)
-	return fileMetadata, nil
+	fmt.Printf("[ReadMultiFileMetadata] Read metadata for %d files (originals present: %v)\n", len(edited), original != nil)
+	return edited, original, nil
 }
 
 func (B *Basic_telemetry_file) List_all_stored_files() ([]string, error) {

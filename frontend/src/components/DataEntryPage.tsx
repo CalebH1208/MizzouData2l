@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SetName, Load_telemetry_file, GetAllChannelNames, GetAllChannelUnvalidatedNames, GetData, ValidateChannel, UnvalidateChannel, SetConversion,GetConversion,SetUnit,GetUnit, DetectAndCorrectUnsignedErrors, ResetDefaults, EnforceRange, SetNegation, GetNegation, ApplyPresetToChannel, SetStructuredTags } from "../../wailsjs/go/Backend/Telemetry_file"
-import { LogFile_to_BTF, Write_BTF, Read_BTF, LoadMRTFForEditing } from  "../../wailsjs/go/Backend/Basic_telemetry_file"
+import { Read_BTF, LoadMRTFForEditing, SaveValidatedData } from  "../../wailsjs/go/Backend/Basic_telemetry_file"
 import { PreviewValidationChannel } from "../../wailsjs/go/graph/Full_graph"
 import { FindMatchingPresets, GetAllPresets } from "../../wailsjs/go/Backend/Preset_manager"
 import { LogPrint, } from "../../wailsjs/runtime/runtime"
@@ -51,6 +51,9 @@ const DataEntryPage: React.FC = () => {
   const [presetsApplied, setPresetsApplied] = useState<Set<string>>(new Set());
   const [skippedChannels, setSkippedChannels] = useState<Set<string>>(new Set());
   const [isValidating, setIsValidating] = useState<boolean>(false);
+  // When non-empty, the validated data came from this MRTF file (loaded via "Load MRTF
+  // for editing"); a re-save preserves that file's notes / reset-data / multi-file shape.
+  const [editingSourcePath, setEditingSourcePath] = useState<string>("");
 
   // Load channel data when component mounts or after successful data loading
   const loadChannelData = async () => {
@@ -144,6 +147,7 @@ const DataEntryPage: React.FC = () => {
     LogPrint(newName + " || path: " + newPath);
     SetName(newName);
     setIsValidating(true);
+    setEditingSourcePath(""); // fresh CSV import — not editing an existing MRTF
     try {
       await Load_telemetry_file(newPath);
       setPopupMessage("Data Parsed!");
@@ -209,8 +213,7 @@ const DataEntryPage: React.FC = () => {
   const handleSaveData = async () => {
     try {
       await SetStructuredTags(fileTags);
-      await LogFile_to_BTF();
-      await Write_BTF(true);
+      await SaveValidatedData(editingSourcePath);
       LogPrint("File stored");
       setPopupMessage("File stored");
       setPopupBg("#42e3ffff");
@@ -369,6 +372,7 @@ const DataEntryPage: React.FC = () => {
       await Read_BTF(filePath);
       await LoadMRTFForEditing();
       await loadChannelData();
+      setEditingSourcePath(filePath);
 
       setPopupMessage("MRTF file loaded for editing");
       setPopupBg("#2f773aff");

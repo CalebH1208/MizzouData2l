@@ -24,15 +24,15 @@ type fileSegment struct {
 	Order          int
 }
 
-func (fg *Full_graph) InitializeFromMultipleFiles(filePaths []string) ([]string, error) {
+func (fg *Full_graph) InitializeFromMultipleFiles(datasetName string, filePaths []string) ([]string, error) {
 	fg.mutex.Lock()
 	defer fg.mutex.Unlock()
 
-	return fg.initializeFromMultipleFilesInternal(filePaths)
+	return fg.initializeFromMultipleFilesInternal(datasetName, filePaths)
 }
 
-func (fg *Full_graph) initializeFromMultipleFilesInternal(filePaths []string) ([]string, error) {
-	fmt.Printf("[InitializeFromMultipleFiles] Loading %d files...\n", len(filePaths))
+func (fg *Full_graph) initializeFromMultipleFilesInternal(datasetName string, filePaths []string) ([]string, error) {
+	fmt.Printf("[InitializeFromMultipleFiles] Loading %d files (dataset name: %q)...\n", len(filePaths), datasetName)
 
 	fmt.Printf("[InitializeFromMultipleFiles] Clearing graph state...\n")
 	fg.Graphs = nil
@@ -45,6 +45,7 @@ func (fg *Full_graph) initializeFromMultipleFilesInternal(filePaths []string) ([
 	fg.IsMultiFile = false
 	fg.FileMetadata = nil
 	fg.FileBoundaries = nil
+	fg.OriginalFileMetadata = nil
 	fg.Notes = nil
 	fg.ChangeLog = nil
 	fg.RedoStack = nil
@@ -171,7 +172,17 @@ func (fg *Full_graph) initializeFromMultipleFilesInternal(filePaths []string) ([
 
 	fmt.Printf("[InitializeFromMultipleFiles] Building merged stored_file_manager with %d unique channels...\n", len(allChannels))
 	sfm := fg.stored_file_manager
+	if datasetName != "" {
+		sfm.Name = datasetName
+	} else if sfm.Name == "" {
+		base := fileSegments[0].OriginalName
+		if ext := filepath.Ext(base); ext != "" {
+			base = base[:len(base)-len(ext)]
+		}
+		sfm.Name = base + "_merged"
+	}
 	sfm.Tags = []string{"multi-file-merged"}
+	sfm.OriginalChannels = nil
 	sfm.Channels = make(map[string]types.Stored_channel, len(allChannels)+1)
 	sfm.DeletedSegments = nil
 	sfm.ChangeLog = nil

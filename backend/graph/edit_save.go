@@ -7,9 +7,27 @@ import (
 	"MizzouDataTool/backend/types"
 )
 
+func cloneFileMetadata(src []types.File_metadata) []types.File_metadata {
+	if src == nil {
+		return nil
+	}
+	dst := make([]types.File_metadata, len(src))
+	for i, m := range src {
+		m.ChannelNames = append([]string(nil), m.ChannelNames...)
+		dst[i] = m
+	}
+	return dst
+}
+
 func (fg *Full_graph) snapshotOriginal() {
 	if len(fg.stored_file_manager.OriginalChannels) > 0 {
-		return // already loaded from persisted ORIG section
+		// Original channel data was loaded from a persisted ORIG section. The current
+		// FileMetadata reflects the *edited* state, not the original, so we can't use
+		// it as the original metadata snapshot — ResetToOriginal will reconcile counts.
+		return
+	}
+	if fg.IsMultiFile && len(fg.OriginalFileMetadata) == 0 {
+		fg.OriginalFileMetadata = cloneFileMetadata(fg.FileMetadata)
 	}
 	fg.stored_file_manager.OriginalChannels = make(map[string]types.Stored_channel, len(fg.stored_file_manager.Channels))
 	for name, sc := range fg.stored_file_manager.Channels {
@@ -48,25 +66,15 @@ func (fg *Full_graph) ResetToOriginal() error {
 	fg.FullTimeStamps = make([]float64, len(origTime.Data))
 	copy(fg.FullTimeStamps, origTime.Data)
 
-	// Restore multi-file boundaries from original Time data
+	// Restore multi-file metadata: prefer the session snapshot taken at load time
+	// (exact per-file counts), otherwise reconcile against the restored timeline.
 	if fg.IsMultiFile && len(fg.FileMetadata) > 0 {
-		offset := 0
-		for i := range fg.FileMetadata {
-			count := fg.FileMetadata[i].DataPointCount
-			if offset < len(fg.FullTimeStamps) {
-				fg.FileMetadata[i].AdjustedStart = fg.FullTimeStamps[offset]
-				endOffset := offset + count - 1
-				if endOffset >= len(fg.FullTimeStamps) {
-					endOffset = len(fg.FullTimeStamps) - 1
-				}
-				fg.FileMetadata[i].AdjustedEnd = fg.FullTimeStamps[endOffset]
-			}
-			offset += count
+		if len(fg.OriginalFileMetadata) == len(fg.FileMetadata) {
+			fg.FileMetadata = cloneFileMetadata(fg.OriginalFileMetadata)
+		} else {
+			fg.syncFileMetadataPointCounts()
 		}
-		fg.FileBoundaries = make([]float64, 0, len(fg.FileMetadata)-1)
-		for i := 1; i < len(fg.FileMetadata); i++ {
-			fg.FileBoundaries = append(fg.FileBoundaries, fg.FileMetadata[i].AdjustedStart)
-		}
+		fg.recomputeMultiFileBoundaries()
 	}
 
 	// Reverse note time shifts using persisted TimeMutations (survives saves)
@@ -150,6 +158,15 @@ func (fg *Full_graph) saveSingleFileChanges() error {
 }
 
 func (fg *Full_graph) saveMultiFileChanges() error {
+	if fg.stored_file_manager.Name == "" {
+		return fmt.Errorf("multi-file dataset has no name; use \"Save Merged File\" first")
+	}
+
+	// Reconcile per-file point counts with the actual merged length before persisting
+	// the metadata trailer, so a reload on any machine rebuilds identical boundaries.
+	fg.syncFileMetadataPointCounts()
+	fg.recomputeMultiFileBoundaries()
+
 	btf := Backend.New_BTF(nil)
 	btf.Name = fg.stored_file_manager.Name
 	btf.Tags = []string{"multi-file-concatenated"}

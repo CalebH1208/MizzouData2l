@@ -42,6 +42,7 @@ func (fg *Full_graph) ClearGraphState() error {
 	fg.IsMultiFile = false
 	fg.FileMetadata = nil
 	fg.FileBoundaries = nil
+	fg.OriginalFileMetadata = nil
 	fg.Notes = nil
 	fg.DeletedSegments = nil
 	fg.ChangeLog = nil
@@ -73,6 +74,7 @@ func (fg *Full_graph) InitializeFromStoredFile() error {
 	fg.IsMultiFile = false
 	fg.FileMetadata = nil
 	fg.FileBoundaries = nil
+	fg.OriginalFileMetadata = nil
 	fg.HasUnsavedChanges = false
 	debug.FreeOSMemory()
 	fmt.Println("[GraphAPI] Cleared previous graph state for new data load")

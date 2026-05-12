@@ -180,7 +180,10 @@ const LoadPopover: React.FC<LoadPopoverProps> = ({ loadedFilePath, onSingleLoad,
         ? multiFiles.map(f => (f as any).originalPath || f.originalName)
         : [];
       const allPaths = [...existingPaths, ...newPaths];
-      const warnings = await InitializeFromMultipleFiles(allPaths);
+      const datasetName = existingPaths.length > 0
+        ? ''
+        : (newPaths[0].split(/[\\/]/).pop() || newPaths[0]).replace(/\.[^.]+$/, '') + '_merged';
+      const warnings = await InitializeFromMultipleFiles(datasetName, allPaths);
       if (warnings && warnings.length > 0) LogPrint('Warnings: ' + warnings.join(', '));
       const boundaries = await GetFileBoundaries();
       setMultiFiles(boundaries);

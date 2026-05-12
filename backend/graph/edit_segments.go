@@ -129,35 +129,13 @@ func (fg *Full_graph) DeleteSegment(startTime, endTime float64) error {
 	copy(timeCh.Data, newTimestamps)
 	fg.stored_file_manager.Channels["Time"] = timeCh
 
-	// Adjust FileMetadata boundaries in multi-file mode
+	// Adjust per-file point counts and boundaries in multi-file mode.
+	// startIdx/endIdx are indices into the pre-delete merged arrays, so we can
+	// compute exactly how many points each file lost, then derive AdjustedStart/End
+	// and FileBoundaries from the post-delete FullTimeStamps + updated counts.
 	if fg.IsMultiFile {
-		shift := removedDuration - 0.01
-		for i := range fg.FileMetadata {
-			// AdjustedStart: clamp if inside deleted range, shift if after it
-			if fg.FileMetadata[i].AdjustedStart > seg.StartTime && fg.FileMetadata[i].AdjustedStart <= seg.EndTime {
-				fg.FileMetadata[i].AdjustedStart = seg.StartTime
-			} else if fg.FileMetadata[i].AdjustedStart > seg.EndTime {
-				fg.FileMetadata[i].AdjustedStart -= shift
-			}
-			// AdjustedEnd: clamp if inside deleted range, shift if after it
-			if fg.FileMetadata[i].AdjustedEnd > seg.StartTime && fg.FileMetadata[i].AdjustedEnd <= seg.EndTime {
-				fg.FileMetadata[i].AdjustedEnd = seg.StartTime
-			} else if fg.FileMetadata[i].AdjustedEnd > seg.EndTime {
-				fg.FileMetadata[i].AdjustedEnd -= shift
-			}
-		}
-		// FileBoundaries: remove any that fell inside the deleted range, shift those after it
-		newBoundaries := fg.FileBoundaries[:0]
-		for _, b := range fg.FileBoundaries {
-			if b > seg.StartTime && b <= seg.EndTime {
-				// boundary consumed by deletion — drop it
-			} else if b > seg.EndTime {
-				newBoundaries = append(newBoundaries, b-shift)
-			} else {
-				newBoundaries = append(newBoundaries, b)
-			}
-		}
-		fg.FileBoundaries = newBoundaries
+		fg.subtractDeletedPointsFromFiles(startIdx, endIdx)
+		fg.recomputeMultiFileBoundaries()
 	}
 
 	// Snapshot notes before modification so undo can restore exactly
