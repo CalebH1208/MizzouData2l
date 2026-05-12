@@ -508,7 +508,10 @@ const GraphsPage: React.FC = () => {
   const handleAnalysis = async () => {
     try {
       const ids = await ExtractFragmentsFromMarkers();
-      if (ids.length === 0) { LogPrint('No valid marker pairs found.'); return; }
+      if (ids.length === 0) {
+        setAlertModal({ isOpen: true, title: 'No Analysis Lines', message: 'Hey num nuts put som nalysis lines' });
+        return;
+      }
       navigate('/tools');
     } catch (err) { LogPrint(`Error extracting fragments: ${err}`); }
   };
