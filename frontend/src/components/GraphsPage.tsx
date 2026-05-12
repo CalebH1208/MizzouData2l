@@ -28,6 +28,7 @@ import { OpenFileDialog, OpenMultipleFilesDialog } from '../../wailsjs/go/main/A
 import TuneGraph from './TuneGraph';
 import ChannelManagerUnified from './ChannelManagerUnified';
 import AlertModal from './AlertModal';
+import PopUpDialog from './PopUp';
 import ConfirmModal from './ConfirmModal';
 import PromptModal from './PromptModal';
 import PowerCurvePanel from './PowerCurvePanel';
@@ -431,6 +432,7 @@ const GraphsPage: React.FC = () => {
   const [powerCurveWidth, setPowerCurveWidth] = useState(480);
   const [alertModal, setAlertModal] = useState({ isOpen: false, title: '', message: '' });
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', message: '', onConfirm: () => {} });
+  const [noAnalysisLinesPopup, setNoAnalysisLinesPopup] = useState(false);
 
   const isDraggingDivider = useRef(false);
   const dragStartX = useRef(0);
@@ -509,11 +511,19 @@ const GraphsPage: React.FC = () => {
     try {
       const ids = await ExtractFragmentsFromMarkers();
       if (ids.length === 0) {
-        setAlertModal({ isOpen: true, title: 'No Analysis Lines', message: 'Hey num nuts put som nalysis lines' });
+        setNoAnalysisLinesPopup(true);
         return;
       }
       navigate('/tools');
-    } catch (err) { LogPrint(`Error extracting fragments: ${err}`); }
+    } catch (err) {
+      LogPrint(`Error extracting fragments: ${err}`);
+      const msg = String(err);
+      if (msg.includes('at least one start and one end marker')) {
+        setNoAnalysisLinesPopup(true);
+      } else {
+        setAlertModal({ isOpen: true, title: 'Analysis Tools', message: msg });
+      }
+    }
   };
 
   const handleUndo = async () => {
@@ -705,6 +715,9 @@ const GraphsPage: React.FC = () => {
 
       <AlertModal isOpen={alertModal.isOpen} title={alertModal.title} message={alertModal.message} onClose={() => setAlertModal(m => ({ ...m, isOpen: false }))} />
       <ConfirmModal isOpen={confirmModal.isOpen} title={confirmModal.title} message={confirmModal.message} onConfirm={confirmModal.onConfirm} onCancel={() => setConfirmModal(m => ({ ...m, isOpen: false }))} confirmText="Confirm" />
+      {noAnalysisLinesPopup && (
+        <PopUpDialog message="Hey num nuts put som nalysis lines" bgColor="#5500FF" onClose={() => setNoAnalysisLinesPopup(false)} />
+      )}
     </div>
   );
 };
