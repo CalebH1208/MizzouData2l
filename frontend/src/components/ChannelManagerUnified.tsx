@@ -100,6 +100,209 @@ const ColorEditor: React.FC<ColorEditorProps> = ({ color, anchorRect, onApply, o
   );
 };
 
+// ─── Graphs sidebar panel ─────────────────────────────────────────────────────
+interface GraphsPanelProps {
+  metadata: graph.Graph_metadata | null;
+  channels: graph.Channel_info[];
+  dragOverGraph: number | null;
+  editingGraphTitle: number | null;
+  editingTitleValue: string;
+  onDragOver: (e: React.DragEvent, gi: number) => void;
+  onDragEnter: (e: React.DragEvent, gi: number) => void;
+  onDragLeave: (e: React.DragEvent) => void;
+  onDrop: (e: React.DragEvent, gi: number) => void;
+  onDoubleClickTitle: (gi: number, title: string) => void;
+  onTitleChange: (v: string) => void;
+  onTitleBlur: (gi: number) => void;
+  onTitleKeyDown: (e: React.KeyboardEvent, gi: number) => void;
+  onDeleteGraph: (gi: number) => void;
+  onRemoveChannel: (name: string) => void;
+  onToggleSplitAxis: (gi: number, cur: boolean) => void;
+}
+
+const GraphsPanel: React.FC<GraphsPanelProps> = ({
+  metadata, channels, dragOverGraph, editingGraphTitle, editingTitleValue,
+  onDragOver, onDragEnter, onDragLeave, onDrop,
+  onDoubleClickTitle, onTitleChange, onTitleBlur, onTitleKeyDown,
+  onDeleteGraph, onRemoveChannel, onToggleSplitAxis,
+}) => (
+  <>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderBottom: `1px solid ${SEPARATOR}`, flexShrink: 0 }}>
+      <span style={{ fontSize: 11, fontWeight: 'bold', color: '#666', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+        {metadata?.numGraphs || 0} Graph{(metadata?.numGraphs || 0) !== 1 ? 's' : ''}
+      </span>
+    </div>
+    <div style={{ flex: 1, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
+      {!metadata || metadata.numGraphs === 0 ? (
+        <div style={{ fontSize: 12, color: '#444', fontStyle: 'italic', padding: '20px 0', textAlign: 'center' }}>No graphs configured</div>
+      ) : (
+        metadata.graphInfo.map(g => {
+          const gChs = channels.filter(c => c.graphIndex === g.index);
+          const isOver = dragOverGraph === g.index;
+          return (
+            <div key={g.index}
+              onDragOver={e => onDragOver(e, g.index)}
+              onDragEnter={e => onDragEnter(e, g.index)}
+              onDragLeave={onDragLeave}
+              onDrop={e => onDrop(e, g.index)}
+              style={{ background: isOver ? 'rgba(241,184,45,0.08)' : '#111', border: `2px solid ${isOver ? GOLD : SEPARATOR}`, borderRadius: 6, overflow: 'hidden', transition: 'all 0.12s' }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', borderBottom: `1px solid ${SEPARATOR}` }}>
+                {editingGraphTitle === g.index ? (
+                  <input autoFocus value={editingTitleValue}
+                    onChange={e => onTitleChange(e.target.value)}
+                    onBlur={() => onTitleBlur(g.index)}
+                    onKeyDown={e => onTitleKeyDown(e, g.index)}
+                    style={{ flex: 1, background: 'transparent', color: 'white', border: 'none', borderBottom: `2px solid ${GOLD}`, borderRadius: 0, outline: 'none', fontFamily: FONT, fontSize: 12, fontWeight: 'bold', padding: '1px 4px' }}
+                  />
+                ) : (
+                  <span
+                    onDoubleClick={() => onDoubleClickTitle(g.index, g.title)}
+                    style={{ flex: 1, fontSize: 12, fontWeight: 'bold', color: 'white', cursor: 'text', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    title="Double-click to rename"
+                  >{g.title}</span>
+                )}
+                <span style={{ backgroundColor: GOLD, color: 'black', borderRadius: 3, padding: '1px 5px', fontSize: 10, fontWeight: 'bold', flexShrink: 0 }}>{g.index + 1}</span>
+                <button onClick={() => onDeleteGraph(g.index)}
+                  style={{ background: 'none', border: 'none', color: '#f05c5c', cursor: 'pointer', fontSize: 16, padding: '0 2px', lineHeight: 1, flexShrink: 0 }}>×</button>
+              </div>
+              <div style={{ padding: '4px 8px 6px' }}>
+                {isOver && <div style={{ fontSize: 10, color: GOLD, fontStyle: 'italic', padding: '3px 0', textAlign: 'center' }}>Drop to assign</div>}
+                {gChs.map(ch => (
+                  <div key={ch.name} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '2px 0' }}>
+                    <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: ch.color, flexShrink: 0, border: '1px solid rgba(255,255,255,0.1)' }} />
+                    <span style={{ flex: 1, fontSize: 10, fontFamily: 'monospace', color: '#999', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.name}</span>
+                    <button onClick={() => onRemoveChannel(ch.name)}
+                      style={{ background: 'none', border: 'none', color: '#f05c5c', cursor: 'pointer', fontSize: 14, padding: '0 2px', lineHeight: 1, flexShrink: 0 }}>×</button>
+                  </div>
+                ))}
+                {gChs.length === 0 && !isOver && (
+                  <div style={{ fontSize: 10, color: '#333', fontStyle: 'italic', padding: '3px 0' }}>Drag channels here</div>
+                )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 5, paddingTop: 5, borderTop: `1px solid ${SEPARATOR}` }}>
+                  <input type="checkbox" id={`sa-${g.index}`} checked={g.useSplitAxis || false}
+                    onChange={() => onToggleSplitAxis(g.index, g.useSplitAxis || false)}
+                    style={{ accentColor: GOLD, width: 11, height: 11, cursor: 'pointer' }} />
+                  <label htmlFor={`sa-${g.index}`} style={{ fontSize: 10, color: '#666', cursor: 'pointer', userSelect: 'none' }}>Split Y-Axis</label>
+                </div>
+              </div>
+            </div>
+          );
+        })
+      )}
+      <div
+        onDragOver={e => onDragOver(e, -99)}
+        onDragEnter={e => onDragEnter(e, -99)}
+        onDragLeave={onDragLeave}
+        onDrop={e => onDrop(e, -1)}
+        style={{ border: `2px dashed ${dragOverGraph === -99 ? GOLD : SEPARATOR}`, borderRadius: 6, padding: '10px 8px', textAlign: 'center', fontSize: 10, color: dragOverGraph === -99 ? GOLD : '#333', transition: 'all 0.13s', background: dragOverGraph === -99 ? 'rgba(241,184,45,0.06)' : 'transparent' }}
+      >
+        {dragOverGraph === -99 ? 'Drop → New Graph' : '+ New Graph (drop here)'}
+      </div>
+    </div>
+  </>
+);
+
+// ─── Presets sidebar panel ────────────────────────────────────────────────────
+interface PresetsPanelProps {
+  presets: PresetManager.GraphPreset[];
+  activePresetId: string | null;
+  draggedPresetId: string | null;
+  dragOverPresetId: string | null;
+  editingPresetId: string | null;
+  editingPresetName: string;
+  onSave: () => void;
+  onLoad: (p: PresetManager.GraphPreset) => void;
+  onUpdate: (p: PresetManager.GraphPreset) => void;
+  onDeleteConfirm: (p: PresetManager.GraphPreset) => void;
+  onPresetDragStart: (id: string) => void;
+  onPresetDragOver: (id: string) => void;
+  onPresetDragLeave: () => void;
+  onPresetDrop: (e: React.DragEvent, id: string) => void;
+  onDoubleClickName: (id: string, name: string) => void;
+  onEditingNameChange: (v: string) => void;
+  onEditingNameBlur: (id: string, name: string) => void;
+  onEditingNameKeyDown: (e: React.KeyboardEvent, id: string, name: string) => void;
+  inputStyle: React.CSSProperties;
+}
+
+const PresetsPanel: React.FC<PresetsPanelProps> = ({
+  presets, activePresetId, draggedPresetId, dragOverPresetId,
+  editingPresetId, editingPresetName,
+  onSave, onLoad, onUpdate, onDeleteConfirm,
+  onPresetDragStart, onPresetDragOver, onPresetDragLeave, onPresetDrop,
+  onDoubleClickName, onEditingNameChange, onEditingNameBlur, onEditingNameKeyDown,
+  inputStyle,
+}) => (
+  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+    <div style={{ padding: '8px 10px', borderBottom: `1px solid ${SEPARATOR}`, flexShrink: 0, display: 'flex', justifyContent: 'flex-end' }}>
+      <button onClick={onSave}
+        style={{ backgroundColor: GOLD, color: 'black', border: 'none', borderRadius: 4, padding: '5px 10px', fontSize: 11, fontWeight: 'bold', cursor: 'pointer', fontFamily: FONT }}
+        onMouseEnter={e => e.currentTarget.style.backgroundColor = '#d19f25'}
+        onMouseLeave={e => e.currentTarget.style.backgroundColor = GOLD}
+      >+ Save Preset</button>
+    </div>
+    <div style={{ flex: 1, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <div style={{ fontSize: 10, color: '#444', marginBottom: 4, lineHeight: 1.4 }}>Drag to reorder · Double-click name to rename</div>
+      {presets.map((p, idx) => (
+        <div key={p.id}
+          draggable={p.id !== '__last_session__'}
+          onDragStart={e => { onPresetDragStart(p.id); e.dataTransfer.effectAllowed = 'move'; }}
+          onDragOver={e => { e.preventDefault(); onPresetDragOver(p.id); }}
+          onDragLeave={onPresetDragLeave}
+          onDrop={e => onPresetDrop(e, p.id)}
+          style={{
+            display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px',
+            background: p.id === activePresetId ? 'rgba(241,184,45,0.1)' : dragOverPresetId === p.id ? 'rgba(241,184,45,0.06)' : '#111',
+            border: `1px solid ${p.id === activePresetId ? GOLD : dragOverPresetId === p.id ? GOLD + '88' : SEPARATOR}`,
+            borderRadius: 5, cursor: p.id === '__last_session__' ? 'default' : 'grab',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {p.id !== '__last_session__' && <span style={{ color: '#444', fontSize: 13 }}>≡</span>}
+            <span style={{ background: GOLD, color: 'black', borderRadius: 3, padding: '1px 5px', fontSize: 10, fontWeight: 'bold', flexShrink: 0 }}>{idx + 1}</span>
+            {editingPresetId === p.id ? (
+              <input autoFocus value={editingPresetName}
+                onChange={e => onEditingNameChange(e.target.value)}
+                onBlur={() => onEditingNameBlur(p.id, editingPresetName)}
+                onKeyDown={e => onEditingNameKeyDown(e, p.id, editingPresetName)}
+                style={{ flex: 1, ...inputStyle, fontSize: 12, padding: '2px 5px' }}
+              />
+            ) : (
+              <span
+                onDoubleClick={() => p.id !== '__last_session__' && onDoubleClickName(p.id, p.name)}
+                style={{ flex: 1, fontSize: 12, fontWeight: 'bold', color: p.id === activePresetId ? GOLD : 'white', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: p.id !== '__last_session__' ? 'text' : 'default' }}
+                title="Double-click to rename"
+              >{p.name}</span>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button onClick={() => onLoad(p)}
+              style={{ flex: 1, padding: '3px 0', backgroundColor: '#1a1a1a', color: GOLD, border: `1px solid ${GOLD}44`, borderRadius: 3, fontSize: 10, fontWeight: 'bold', cursor: 'pointer', fontFamily: FONT }}
+              onMouseEnter={e => { e.currentTarget.style.backgroundColor = GOLD; e.currentTarget.style.color = 'black'; }}
+              onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#1a1a1a'; e.currentTarget.style.color = GOLD; }}
+            >Load</button>
+            {p.id !== '__last_session__' && (
+              <>
+                <button onClick={() => onUpdate(p)}
+                  style={{ flex: 1, padding: '3px 0', backgroundColor: '#1a1a1a', color: '#ccc', border: '1px solid #333', borderRadius: 3, fontSize: 10, fontWeight: 'bold', cursor: 'pointer', fontFamily: FONT }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = '#555'; e.currentTarget.style.color = 'white'; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = '#333'; e.currentTarget.style.color = '#ccc'; }}
+                >Update</button>
+                <button onClick={() => onDeleteConfirm(p)}
+                  style={{ padding: '3px 8px', backgroundColor: '#1a1a1a', color: '#f05c5c', border: '1px solid #f05c5c44', borderRadius: 3, fontSize: 10, fontWeight: 'bold', cursor: 'pointer', fontFamily: FONT }}
+                  onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f05c5c'; e.currentTarget.style.color = 'white'; }}
+                  onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#1a1a1a'; e.currentTarget.style.color = '#f05c5c'; }}
+                >Delete</button>
+              </>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
 // ─── Main component ───────────────────────────────────────────────────────────
 const ChannelManagerUnified: React.FC<ChannelManagerUnifiedProps> = ({
   currentViewportStart,
@@ -404,156 +607,6 @@ const ChannelManagerUnified: React.FC<ChannelManagerUnifiedProps> = ({
     borderRadius: 5, outline: 'none', fontFamily: FONT,
   };
 
-  // ── Sidebar: Graphs panel ────────────────────────────────────────────────────
-  const GraphsPanel = () => (
-    <>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderBottom: `1px solid ${SEPARATOR}`, flexShrink: 0 }}>
-        <span style={{ fontSize: 11, fontWeight: 'bold', color: '#666', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-          {metadata?.numGraphs || 0} Graph{(metadata?.numGraphs || 0) !== 1 ? 's' : ''}
-        </span>
-      </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
-        {!metadata || metadata.numGraphs === 0 ? (
-          <div style={{ fontSize: 12, color: '#444', fontStyle: 'italic', padding: '20px 0', textAlign: 'center' }}>No graphs configured</div>
-        ) : (
-          metadata.graphInfo.map(g => {
-            const gChs = channels.filter(c => c.graphIndex === g.index);
-            const isOver = dragOverGraph === g.index;
-            return (
-              <div key={g.index}
-                onDragOver={e => onGraphDragOver(e, g.index)}
-                onDragEnter={e => onGraphDragEnter(e, g.index)}
-                onDragLeave={onGraphDragLeave}
-                onDrop={e => onGraphDrop(e, g.index)}
-                style={{ background: isOver ? 'rgba(241,184,45,0.08)' : '#111', border: `2px solid ${isOver ? GOLD : SEPARATOR}`, borderRadius: 6, overflow: 'hidden', transition: 'all 0.12s' }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', borderBottom: `1px solid ${SEPARATOR}` }}>
-                  {editingGraphTitle === g.index ? (
-                    <input autoFocus value={editingTitleValue}
-                      onChange={e => setEditingTitleValue(e.target.value)}
-                      onBlur={() => handleSaveGraphTitle(g.index)}
-                      onKeyDown={e => { if (e.key === 'Enter') handleSaveGraphTitle(g.index); if (e.key === 'Escape') setEditingGraphTitle(null); }}
-                      style={{ flex: 1, ...inputStyle, fontSize: 12, fontWeight: 'bold', padding: '1px 4px', border: 'none', borderBottom: `2px solid ${GOLD}`, borderRadius: 0, background: 'transparent' }}
-                    />
-                  ) : (
-                    <span
-                      onDoubleClick={() => { setEditingGraphTitle(g.index); setEditingTitleValue(g.title); }}
-                      style={{ flex: 1, fontSize: 12, fontWeight: 'bold', color: 'white', cursor: 'text', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                      title="Double-click to rename"
-                    >{g.title}</span>
-                  )}
-                  <span style={{ backgroundColor: GOLD, color: 'black', borderRadius: 3, padding: '1px 5px', fontSize: 10, fontWeight: 'bold', flexShrink: 0 }}>{g.index + 1}</span>
-                  <button onClick={() => handleDeleteGraph(g.index)}
-                    style={{ background: 'none', border: 'none', color: '#f05c5c', cursor: 'pointer', fontSize: 16, padding: '0 2px', lineHeight: 1, flexShrink: 0 }}>×</button>
-                </div>
-                <div style={{ padding: '4px 8px 6px' }}>
-                  {isOver && <div style={{ fontSize: 10, color: GOLD, fontStyle: 'italic', padding: '3px 0', textAlign: 'center' }}>Drop to assign</div>}
-                  {gChs.map(ch => (
-                    <div key={ch.name} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '2px 0' }}>
-                      <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: ch.color, flexShrink: 0, border: '1px solid rgba(255,255,255,0.1)' }} />
-                      <span style={{ flex: 1, fontSize: 10, fontFamily: 'monospace', color: '#999', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.name}</span>
-                      <button onClick={() => removeChannel(ch.name)}
-                        style={{ background: 'none', border: 'none', color: '#f05c5c', cursor: 'pointer', fontSize: 14, padding: '0 2px', lineHeight: 1, flexShrink: 0 }}>×</button>
-                    </div>
-                  ))}
-                  {gChs.length === 0 && !isOver && (
-                    <div style={{ fontSize: 10, color: '#333', fontStyle: 'italic', padding: '3px 0' }}>Drag channels here</div>
-                  )}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 5, paddingTop: 5, borderTop: `1px solid ${SEPARATOR}` }}>
-                    <input type="checkbox" id={`sa-${g.index}`} checked={g.useSplitAxis || false}
-                      onChange={() => handleToggleSplitAxis(g.index, g.useSplitAxis || false)}
-                      style={{ accentColor: GOLD, width: 11, height: 11, cursor: 'pointer' }} />
-                    <label htmlFor={`sa-${g.index}`} style={{ fontSize: 10, color: '#666', cursor: 'pointer', userSelect: 'none' }}>Split Y-Axis</label>
-                  </div>
-                </div>
-              </div>
-            );
-          })
-        )}
-        <div
-          onDragOver={e => onGraphDragOver(e, -99)}
-          onDragEnter={e => onGraphDragEnter(e, -99)}
-          onDragLeave={onGraphDragLeave}
-          onDrop={e => onGraphDrop(e, -1)}
-          style={{ border: `2px dashed ${dragOverGraph === -99 ? GOLD : SEPARATOR}`, borderRadius: 6, padding: '10px 8px', textAlign: 'center', fontSize: 10, color: dragOverGraph === -99 ? GOLD : '#333', transition: 'all 0.13s', background: dragOverGraph === -99 ? 'rgba(241,184,45,0.06)' : 'transparent' }}
-        >
-          {dragOverGraph === -99 ? 'Drop → New Graph' : '+ New Graph (drop here)'}
-        </div>
-      </div>
-    </>
-  );
-
-  // ── Sidebar: Presets panel ───────────────────────────────────────────────────
-  const PresetsPanel = () => (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-      <div style={{ padding: '8px 10px', borderBottom: `1px solid ${SEPARATOR}`, flexShrink: 0, display: 'flex', justifyContent: 'flex-end' }}>
-        <button onClick={handleSaveCurrentPreset}
-          style={{ backgroundColor: GOLD, color: 'black', border: 'none', borderRadius: 4, padding: '5px 10px', fontSize: 11, fontWeight: 'bold', cursor: 'pointer', fontFamily: FONT }}
-          onMouseEnter={e => e.currentTarget.style.backgroundColor = '#d19f25'}
-          onMouseLeave={e => e.currentTarget.style.backgroundColor = GOLD}
-        >+ Save Preset</button>
-      </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
-        <div style={{ fontSize: 10, color: '#444', marginBottom: 4, lineHeight: 1.4 }}>Drag to reorder · Double-click name to rename</div>
-        {presets.map((p, idx) => (
-          <div key={p.id}
-            draggable={p.id !== '__last_session__'}
-            onDragStart={e => { setDraggedPresetId(p.id); e.dataTransfer.effectAllowed = 'move'; }}
-            onDragOver={e => { e.preventDefault(); setDragOverPresetId(p.id); }}
-            onDragLeave={() => setDragOverPresetId(null)}
-            onDrop={e => handlePresetDrop(e, p.id)}
-            style={{
-              display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px',
-              background: p.id === activePresetId ? 'rgba(241,184,45,0.1)' : dragOverPresetId === p.id ? 'rgba(241,184,45,0.06)' : '#111',
-              border: `1px solid ${p.id === activePresetId ? GOLD : dragOverPresetId === p.id ? GOLD + '88' : SEPARATOR}`,
-              borderRadius: 5, cursor: p.id === '__last_session__' ? 'default' : 'grab',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              {p.id !== '__last_session__' && <span style={{ color: '#444', fontSize: 13 }}>≡</span>}
-              <span style={{ background: GOLD, color: 'black', borderRadius: 3, padding: '1px 5px', fontSize: 10, fontWeight: 'bold', flexShrink: 0 }}>{idx + 1}</span>
-              {editingPresetId === p.id ? (
-                <input autoFocus value={editingPresetName}
-                  onChange={e => setEditingPresetName(e.target.value)}
-                  onBlur={() => { if (editingPresetName.trim()) { PresetManager.updatePreset(p.id, { name: editingPresetName }); setPresets(PresetManager.loadPresets()); onPresetsUpdate?.(); } setEditingPresetId(null); }}
-                  onKeyDown={e => { if (e.key === 'Enter') { PresetManager.updatePreset(p.id, { name: editingPresetName }); setPresets(PresetManager.loadPresets()); onPresetsUpdate?.(); setEditingPresetId(null); } if (e.key === 'Escape') setEditingPresetId(null); }}
-                  style={{ flex: 1, ...inputStyle, fontSize: 12, padding: '2px 5px' }}
-                />
-              ) : (
-                <span
-                  onDoubleClick={() => p.id !== '__last_session__' && (setEditingPresetId(p.id), setEditingPresetName(p.name))}
-                  style={{ flex: 1, fontSize: 12, fontWeight: 'bold', color: p.id === activePresetId ? GOLD : 'white', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: p.id !== '__last_session__' ? 'text' : 'default' }}
-                  title="Double-click to rename"
-                >{p.name}</span>
-              )}
-            </div>
-            <div style={{ display: 'flex', gap: 4 }}>
-              <button onClick={() => handleLoadPreset(p)}
-                style={{ flex: 1, padding: '3px 0', backgroundColor: '#1a1a1a', color: GOLD, border: `1px solid ${GOLD}44`, borderRadius: 3, fontSize: 10, fontWeight: 'bold', cursor: 'pointer', fontFamily: FONT }}
-                onMouseEnter={e => { e.currentTarget.style.backgroundColor = GOLD; e.currentTarget.style.color = 'black'; }}
-                onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#1a1a1a'; e.currentTarget.style.color = GOLD; }}
-              >Load</button>
-              {p.id !== '__last_session__' && (
-                <>
-                  <button onClick={() => handleUpdatePreset(p)}
-                    style={{ flex: 1, padding: '3px 0', backgroundColor: '#1a1a1a', color: '#ccc', border: '1px solid #333', borderRadius: 3, fontSize: 10, fontWeight: 'bold', cursor: 'pointer', fontFamily: FONT }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = '#555'; e.currentTarget.style.color = 'white'; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = '#333'; e.currentTarget.style.color = '#ccc'; }}
-                  >Update</button>
-                  <button onClick={() => setDeletePresetConfirm(p)}
-                    style={{ padding: '3px 8px', backgroundColor: '#1a1a1a', color: '#f05c5c', border: '1px solid #f05c5c44', borderRadius: 3, fontSize: 10, fontWeight: 'bold', cursor: 'pointer', fontFamily: FONT }}
-                    onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#f05c5c'; e.currentTarget.style.color = 'white'; }}
-                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#1a1a1a'; e.currentTarget.style.color = '#f05c5c'; }}
-                  >Delete</button>
-                </>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
   // ── Main render ──────────────────────────────────────────────────────────────
   return (
     <div style={{ width: '100%', height: '100%', background: '#0a0a0a', color: 'white', fontFamily: FONT, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -573,7 +626,54 @@ const ChannelManagerUnified: React.FC<ChannelManagerUnifiedProps> = ({
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
 
         <div style={{ width: 230, flexShrink: 0, borderRight: `1px solid ${SEPARATOR}`, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#0d0d0d' }}>
-          {sideTab === 'graphs' ? GraphsPanel() : PresetsPanel()}
+          {sideTab === 'graphs' ? (
+            <GraphsPanel
+              metadata={metadata}
+              channels={channels}
+              dragOverGraph={dragOverGraph}
+              editingGraphTitle={editingGraphTitle}
+              editingTitleValue={editingTitleValue}
+              onDragOver={onGraphDragOver}
+              onDragEnter={onGraphDragEnter}
+              onDragLeave={onGraphDragLeave}
+              onDrop={onGraphDrop}
+              onDoubleClickTitle={(gi, title) => { setEditingGraphTitle(gi); setEditingTitleValue(title); }}
+              onTitleChange={setEditingTitleValue}
+              onTitleBlur={handleSaveGraphTitle}
+              onTitleKeyDown={(e, gi) => { if (e.key === 'Enter') handleSaveGraphTitle(gi); if (e.key === 'Escape') setEditingGraphTitle(null); }}
+              onDeleteGraph={handleDeleteGraph}
+              onRemoveChannel={removeChannel}
+              onToggleSplitAxis={handleToggleSplitAxis}
+            />
+          ) : (
+            <PresetsPanel
+              presets={presets}
+              activePresetId={activePresetId}
+              draggedPresetId={draggedPresetId}
+              dragOverPresetId={dragOverPresetId}
+              editingPresetId={editingPresetId}
+              editingPresetName={editingPresetName}
+              onSave={handleSaveCurrentPreset}
+              onLoad={handleLoadPreset}
+              onUpdate={handleUpdatePreset}
+              onDeleteConfirm={setDeletePresetConfirm}
+              onPresetDragStart={setDraggedPresetId}
+              onPresetDragOver={setDragOverPresetId}
+              onPresetDragLeave={() => setDragOverPresetId(null)}
+              onPresetDrop={handlePresetDrop}
+              onDoubleClickName={(id, name) => { setEditingPresetId(id); setEditingPresetName(name); }}
+              onEditingNameChange={setEditingPresetName}
+              onEditingNameBlur={(id, name) => {
+                if (name.trim()) { PresetManager.updatePreset(id, { name }); setPresets(PresetManager.loadPresets()); onPresetsUpdate?.(); }
+                setEditingPresetId(null);
+              }}
+              onEditingNameKeyDown={(e, id, name) => {
+                if (e.key === 'Enter') { PresetManager.updatePreset(id, { name }); setPresets(PresetManager.loadPresets()); onPresetsUpdate?.(); setEditingPresetId(null); }
+                if (e.key === 'Escape') setEditingPresetId(null);
+              }}
+              inputStyle={inputStyle}
+            />
+          )}
         </div>
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
@@ -663,7 +763,7 @@ const ChannelManagerUnified: React.FC<ChannelManagerUnifiedProps> = ({
                     return (
                       <tr key={ch.name}
                         draggable
-                        onDragStart={e => { e.stopPropagation(); onRowDragStart(e, ch.name); }}
+                        onDragStart={e => onRowDragStart(e, ch.name)}
                         onDragEnd={onRowDragEnd}
                         onClick={() => { if (colorEditor) { setColorEditor(null); return; } toggleRow(ch.name); }}
                         style={{ background: rowBg, borderBottom: `1px solid ${SEPARATOR}`, cursor: 'pointer', opacity: isDrag ? 0.45 : 1, transition: 'background 0.08s' }}
@@ -671,10 +771,11 @@ const ChannelManagerUnified: React.FC<ChannelManagerUnifiedProps> = ({
                         onMouseLeave={e => { e.currentTarget.style.background = rowBg; }}
                       >
                         <td style={{ padding: '0 8px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
-                          <input type="checkbox" checked={sel} onChange={() => toggleRow(ch.name)} style={{ accentColor: GOLD, cursor: 'pointer' }} />
+                          <input draggable={false} type="checkbox" checked={sel} onChange={() => toggleRow(ch.name)} style={{ accentColor: GOLD, cursor: 'pointer' }} />
                         </td>
                         <td style={{ padding: '0 4px' }} onClick={e => e.stopPropagation()}>
                           <button
+                            draggable={false}
                             onClick={e => {
                               e.stopPropagation();
                               if (colorEditor && colorEditor.name === ch.name) { setColorEditor(null); return; }
@@ -696,6 +797,7 @@ const ChannelManagerUnified: React.FC<ChannelManagerUnifiedProps> = ({
                         </td>
                         <td style={{ padding: '3px 6px' }} onClick={e => e.stopPropagation()}>
                           <select
+                            draggable={false}
                             value={ch.graphIndex >= 0 ? ch.graphIndex : ''}
                             onChange={e => handleSelectChange(ch, e.target.value)}
                             style={{ width: '100%', ...inputStyle, fontSize: 11, padding: '3px 4px', cursor: 'pointer', border: `1px solid #333`, color: ch.graphIndex >= 0 ? 'white' : '#555' }}
@@ -708,7 +810,7 @@ const ChannelManagerUnified: React.FC<ChannelManagerUnifiedProps> = ({
                         <td style={{ padding: '3px 8px' }} onClick={e => e.stopPropagation()}>
                           <div style={{ display: 'flex', gap: 3, justifyContent: 'flex-end', alignItems: 'center' }}>
                             {ch.graphIndex >= 0 && (
-                              <button onClick={() => removeChannel(ch.name)} title="Remove from graph"
+                              <button draggable={false} onClick={() => removeChannel(ch.name)} title="Remove from graph"
                                 style={{ background: 'none', border: 'none', color: '#f05c5c', cursor: 'pointer', fontSize: 18, padding: '0 3px', lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
                             )}
                           </div>

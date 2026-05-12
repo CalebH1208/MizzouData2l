@@ -670,10 +670,12 @@ const GraphsPage: React.FC = () => {
       {showChannelManager && (
         <div
           onClick={() => setShowChannelManager(false)}
+          onDragOver={e => e.preventDefault()}
           style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: 20 }}
         >
           <div
             onClick={e => e.stopPropagation()}
+            onDragOver={e => e.preventDefault()}
             style={{ width: '95%', maxWidth: 1400, height: '90%', maxHeight: 900, backgroundColor: '#0a0a0a', borderRadius: 12, border: `2px solid ${GOLD}`, overflow: 'hidden', boxShadow: `0 10px 50px rgba(241,184,45,0.25)`, position: 'relative', display: 'flex', flexDirection: 'column' }}
           >
             <button
